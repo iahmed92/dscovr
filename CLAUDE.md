@@ -43,12 +43,49 @@ Enrichment stores permanent ids, never preview URLs — Spotify killed
 `preview_url` for API apps and Deezer's previews expire in hours. Playback
 resolves a fresh URL at request time via the `vibecheck` edge function.
 
+## Testing migrations
+
+There is **no local database**: no `config.toml`, no Docker, so `supabase start`
+cannot run. The linked project is production. To avoid "test by applying to
+prod", `npm test` runs every migration against PGlite (Postgres compiled to
+WASM) with a stubbed `auth` schema, then exercises the functions:
+
+    npm test          # supabase/tests/migrations.test.mjs
+
+Write the test alongside the migration. Two traps it exists to catch, both of
+which produced false passes on the way in:
+
+- The stub **must** replicate Supabase's `ALTER DEFAULT PRIVILEGES ... GRANT ALL
+  ON TABLES TO anon, authenticated`. Without it every "secrets are withheld"
+  assertion passes vacuously, because PGlite grants nothing by default.
+- Assert privileges by `SET ROLE anon` and *attempting the read*, not by
+  querying `information_schema`. And it is `SET ROLE`, not `SET LOCAL ROLE` —
+  outside a transaction the latter silently does nothing and every check then
+  runs as superuser, which bypasses RLS and privileges entirely.
+
+PGlite is PG18; production is PG17. Close enough for syntax and logic, not a
+guarantee about Supabase's own auth internals.
+
 ## Schema notes
 
 `markets -> venues -> events -> lineups -> artists`. Natural keys carry the
 upsert logic, so respect them: `artists.name`, `venues.name`, and
 `markets.slug` are UNIQUE; events are unique on `(venue_id, title, event_date)`
 and lineups on `(event_id, artist_id)`.
+
+User-side (0006-0008): `profiles` mirrors `auth.users` via an AFTER INSERT
+trigger; `friendships` and `event_attendance` hang off `auth.users`;
+`user_favorite_genres` / `user_favorite_artists` cache the Spotify taste
+profile. Functions: `get_personalized_recommendations`, `get_filtered_events`,
+`timeframe_window`, `vibes_for_tags`, plus the `event_vibes` view.
+
+**RLS is row-level, not column-level.** `profiles` is publicly readable, so the
+phone and Spotify tokens are held back with column privileges instead — and the
+table-level grant has to be revoked *first*, because Postgres will not let a
+column-level REVOKE override a table-level grant that implies it. A consequence
+worth knowing: `select=*` on profiles is refused for `anon`, so clients must
+name columns. `role` is deliberately not client-writable or a user could
+promote themselves to admin.
 
 Ingestion sends only the columns it owns so it can never clobber enrichment's
 fields on re-run. Keep it that way when adding columns.
