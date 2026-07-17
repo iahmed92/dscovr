@@ -33,6 +33,10 @@ export default function RootLayout() {
               name="sign-in"
               options={{ title: 'Sign in', presentation: 'modal' }}
             />
+            <Stack.Screen
+              name="for-you"
+              options={{ title: 'For you', headerBackTitle: 'Back' }}
+            />
           </Stack>
         </NowPlayingProvider>
       </AuthProvider>

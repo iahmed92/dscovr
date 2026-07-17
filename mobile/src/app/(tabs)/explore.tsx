@@ -67,6 +67,22 @@ export default function AccountScreen() {
                 <ThemedText type="default">{profile?.username ?? '—'}</ThemedText>
               </ThemedView>
 
+              <TouchableOpacity
+                onPress={() => router.push('/for-you')}
+                accessibilityRole="button"
+                accessibilityLabel="For you — personalized picks"
+                style={[styles.forYou, { backgroundColor: theme.backgroundElement }]}>
+                <View style={styles.forYouText}>
+                  <ThemedText type="default">For you</ThemedText>
+                  <ThemedText type="small" themeColor="textSecondary">
+                    Picks tuned to your taste
+                  </ThemedText>
+                </View>
+                <ThemedText type="default" themeColor="textSecondary">
+                  ›
+                </ThemedText>
+              </TouchableOpacity>
+
               {loading && upcoming.length === 0 && past.length === 0 ? (
                 <ActivityIndicator style={styles.loader} />
               ) : upcoming.length === 0 && past.length === 0 ? (
@@ -138,6 +154,16 @@ const styles = StyleSheet.create({
   card: {
     padding: Spacing.three,
     borderRadius: Spacing.three,
+    gap: Spacing.half,
+  },
+  forYou: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    padding: Spacing.three,
+    borderRadius: Spacing.three,
+  },
+  forYouText: {
     gap: Spacing.half,
   },
   section: {
