@@ -4,11 +4,11 @@
  */
 
 import { Colors } from '@/constants/theme';
-import { useColorScheme } from '@/hooks/use-color-scheme';
 
+// Pinned to dark: the Luma look is inherently a dark, minimalist-luxury
+// aesthetic, so the app commits to it rather than following the device setting.
+// To restore automatic light/dark switching, return Colors[useColorScheme()]
+// (guarding 'unspecified') as before.
 export function useTheme() {
-  const scheme = useColorScheme();
-  const theme = scheme === 'unspecified' ? 'light' : scheme;
-
-  return Colors[theme];
+  return Colors.dark;
 }

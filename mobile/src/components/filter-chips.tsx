@@ -40,14 +40,13 @@ export function FilterChips<T extends string>({
             accessibilityLabel={option.label}
             style={[
               styles.pill,
-              {
-                backgroundColor: isSelected ? theme.text : theme.backgroundElement,
-                borderColor: theme.backgroundSelected,
-              },
+              isSelected
+                ? { backgroundColor: '#FFFFFF', borderColor: '#FFFFFF' }
+                : { backgroundColor: 'transparent', borderColor: 'rgba(255, 255, 255, 0.1)' },
             ]}>
             <ThemedText
               type="small"
-              style={{ color: isSelected ? theme.background : theme.textSecondary }}>
+              style={{ color: isSelected ? '#000000' : theme.textSecondary }}>
               {option.label}
             </ThemedText>
           </TouchableOpacity>
@@ -67,6 +66,6 @@ const styles = StyleSheet.create({
     paddingHorizontal: Spacing.three,
     paddingVertical: Spacing.one + 2,
     borderRadius: 999,
-    borderWidth: StyleSheet.hairlineWidth,
+    borderWidth: 1,
   },
 });

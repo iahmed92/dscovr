@@ -8,15 +8,18 @@ import { useTheme } from '@/hooks/use-theme';
 import { Artist } from '@/lib/types';
 
 const VIBE_ACCENT = '#FF3B7F';
+const SPOTIFY_GREEN = '#1DB954';
+const SOUNDCLOUD_ORANGE = '#FF5500';
+const ICON = 14;
 
 function IconLink({ url, icon, color }: { url: string; icon: 'spotify' | 'soundcloud'; color: string }) {
   return (
     <TouchableOpacity
       onPress={() => Linking.openURL(url)}
-      hitSlop={8}
+      hitSlop={10}
       accessibilityRole="link"
       accessibilityLabel={`Open ${icon} profile`}>
-      <FontAwesome5 name={icon} size={16} color={color} />
+      <FontAwesome5 name={icon} size={ICON} color={color} />
     </TouchableOpacity>
   );
 }
@@ -36,13 +39,13 @@ function VibeCheckButton({ artistId }: { artistId: number }) {
   return (
     <TouchableOpacity
       onPress={() => toggle(artistId)}
-      hitSlop={8}
+      hitSlop={10}
       style={styles.vibeButton}
       accessibilityRole="button"
       accessibilityLabel={isActive && isPlaying ? 'Pause preview' : 'Play preview'}>
       <FontAwesome5
         name={isActive && isPlaying ? 'pause' : 'play'}
-        size={14}
+        size={ICON}
         color={hasNoPreview ? theme.textSecondary : VIBE_ACCENT}
         style={hasNoPreview ? styles.mutedIcon : undefined}
       />
@@ -50,25 +53,29 @@ function VibeCheckButton({ artistId }: { artistId: number }) {
   );
 }
 
+// Luma-style lineup: a wrap-around grid of artist cells rather than a full-width
+// vertical stack. Each cell is the name with its streaming indicators tucked
+// underneath at 14px, so the icons read as quiet metadata instead of a column
+// of buttons fighting the names for attention.
 export function ArtistLineup({ artists }: { artists: Artist[] }) {
   const theme = useTheme();
 
   if (artists.length === 0) return null;
 
   return (
-    <View style={styles.container}>
+    <View style={styles.grid}>
       {artists.map((artist) => (
-        <View key={artist.id} style={styles.row}>
-          <ThemedText type="small" style={styles.name} numberOfLines={1}>
+        <View key={artist.id} style={styles.cell}>
+          <ThemedText type="small" numberOfLines={1}>
             {artist.name}
           </ThemedText>
           <View style={styles.icons}>
             <VibeCheckButton artistId={artist.id} />
             {artist.spotify_url && (
-              <IconLink url={artist.spotify_url} icon="spotify" color="#1DB954" />
+              <IconLink url={artist.spotify_url} icon="spotify" color={SPOTIFY_GREEN} />
             )}
             {artist.soundcloud_url && (
-              <IconLink url={artist.soundcloud_url} icon="soundcloud" color={theme.textSecondary} />
+              <IconLink url={artist.soundcloud_url} icon="soundcloud" color={SOUNDCLOUD_ORANGE} />
             )}
           </View>
         </View>
@@ -78,17 +85,18 @@ export function ArtistLineup({ artists }: { artists: Artist[] }) {
 }
 
 const styles = StyleSheet.create({
-  container: {
-    gap: Spacing.one,
-  },
-  row: {
+  grid: {
     flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    gap: Spacing.two,
+    flexWrap: 'wrap',
+    rowGap: Spacing.three,
+    columnGap: Spacing.three,
   },
-  name: {
-    flex: 1,
+  // Two columns that wrap; flexGrow lets a lone trailing cell fill the row.
+  cell: {
+    flexBasis: '46%',
+    flexGrow: 1,
+    minWidth: 130,
+    gap: Spacing.one,
   },
   icons: {
     flexDirection: 'row',
@@ -96,7 +104,7 @@ const styles = StyleSheet.create({
     alignItems: 'center',
   },
   vibeButton: {
-    width: 16,
+    width: ICON,
     alignItems: 'center',
   },
   mutedIcon: {

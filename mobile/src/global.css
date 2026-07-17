@@ -7,3 +7,18 @@
   --font-rounded: 'SF Pro Rounded', 'Hiragino Maru Gothic ProN', Meiryo, 'MS PGothic', sans-serif;
   --font-serif: Georgia, 'Times New Roman', serif;
 }
+
+/* Luma-style: horizontally scrollable filter rows with no visible scrollbar.
+   RN Web ignores showsHorizontalScrollIndicator={false}, so hide it in CSS.
+   Scoped to horizontal scrollers to avoid nuking scrollbars app-wide. */
+[style*='overflow-x: scroll'],
+[style*='overflow-x: auto'],
+[style*='overflow: scroll'] {
+  scrollbar-width: none;
+  -ms-overflow-style: none;
+}
+[style*='overflow-x: scroll']::-webkit-scrollbar,
+[style*='overflow-x: auto']::-webkit-scrollbar,
+[style*='overflow: scroll']::-webkit-scrollbar {
+  display: none;
+}

@@ -27,14 +27,13 @@ export function MarketPicker({ markets, selectedId, onSelect }: Props) {
             onPress={() => onSelect(market.id)}
             style={[
               styles.pill,
-              {
-                backgroundColor: selected ? theme.text : theme.backgroundElement,
-                borderColor: theme.backgroundSelected,
-              },
+              selected
+                ? { backgroundColor: '#FFFFFF', borderColor: '#FFFFFF' }
+                : { backgroundColor: 'transparent', borderColor: 'rgba(255, 255, 255, 0.1)' },
             ]}>
             <ThemedText
               type="smallBold"
-              style={{ color: selected ? theme.background : theme.text }}>
+              style={{ color: selected ? '#000000' : theme.text }}>
               {market.name}
             </ThemedText>
           </TouchableOpacity>
@@ -54,6 +53,6 @@ const styles = StyleSheet.create({
     paddingHorizontal: Spacing.three,
     paddingVertical: Spacing.two,
     borderRadius: 999,
-    borderWidth: StyleSheet.hairlineWidth,
+    borderWidth: 1,
   },
 });

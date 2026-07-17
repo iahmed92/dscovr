@@ -7,20 +7,27 @@ import '@/global.css';
 
 import { Platform } from 'react-native';
 
+// Luma-inspired dark palette: near-black canvas, a single step up for cards,
+// crisp off-white text, muted gray for secondary. `border` is the hairline that
+// replaces shadows and heavy borders throughout. The app is pinned to dark (see
+// use-theme.ts), so `light` is kept only to satisfy the type — it mirrors the
+// same tokens for the day someone re-enables theme switching.
 export const Colors = {
   light: {
-    text: '#000000',
+    text: '#111111',
     background: '#ffffff',
-    backgroundElement: '#F0F0F3',
-    backgroundSelected: '#E0E1E6',
-    textSecondary: '#60646C',
+    backgroundElement: '#F7F7F8',
+    backgroundSelected: '#ECECEE',
+    textSecondary: '#6B6B6B',
+    border: 'rgba(0, 0, 0, 0.08)',
   },
   dark: {
-    text: '#ffffff',
-    background: '#000000',
-    backgroundElement: '#212225',
-    backgroundSelected: '#2E3135',
-    textSecondary: '#B0B4BA',
+    text: '#EDEDED',
+    background: '#0A0A0A',
+    backgroundElement: '#141414',
+    backgroundSelected: '#1F1F1F',
+    textSecondary: '#8F8F8F',
+    border: 'rgba(255, 255, 255, 0.08)',
   },
 } as const;
 

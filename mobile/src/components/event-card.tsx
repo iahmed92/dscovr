@@ -17,7 +17,7 @@ export function EventCard({ event }: { event: EventWithDetails }) {
   const artists = lineupArtists(event.lineups);
 
   return (
-    <ThemedView type="backgroundElement" style={styles.card}>
+    <ThemedView type="backgroundElement" style={[styles.card, { borderColor: theme.border }]}>
       <Link href={`/event/${event.id}`} asChild>
         <TouchableOpacity accessibilityRole="button" accessibilityLabel={`View ${event.title}`}>
           {event.flyer_url ? (
@@ -75,6 +75,7 @@ const styles = StyleSheet.create({
   card: {
     borderRadius: Spacing.three,
     overflow: 'hidden',
+    borderWidth: 1,
   },
   flyer: {
     width: '100%',
@@ -85,14 +86,14 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
   },
   cardTextBlock: {
-    padding: Spacing.three,
+    padding: Spacing.four,
     paddingBottom: 0,
-    gap: Spacing.one,
+    gap: Spacing.two,
   },
   body: {
-    paddingHorizontal: Spacing.three,
-    paddingBottom: Spacing.three,
-    gap: Spacing.one,
+    paddingHorizontal: Spacing.four,
+    paddingBottom: Spacing.four,
+    gap: Spacing.two,
   },
   metaRow: {
     flexDirection: 'row',
