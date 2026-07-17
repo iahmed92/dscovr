@@ -1,6 +1,18 @@
 // Ticketmaster Discovery API -> Supabase ingestion sync for DSCOVR.
-// Pulls Dance/Electronic events for the seeded market and upserts
-// venues / promoters / events / artists / lineups against the live schema.
+// Loops over every active row in `markets`, pulls Dance/Electronic events
+// for that market's state (see filtering strategy below), and upserts
+// venues / promoters / events / artists / lineups against the live schema —
+// scales to new markets just by adding rows to the table, no code changes
+// required.
+//
+// ACCURACY CAVEAT: markets are filtered by Ticketmaster `stateCode`, because
+// that's the only geographic signal `markets.state` gives us. That's exact
+// for a state with one dominant metro (AZ -> Phoenix/Tucson), but WRONG for
+// multi-metro states: a market row like `{ slug: 'los-angeles', state: 'CA' }`
+// would also pull in San Francisco, San Diego, and Sacramento events and
+// mislabel them as LA. Don't add a market for a multi-metro state without
+// first giving `markets` a city/DMA-level filter and using Ticketmaster's
+// `city` or `dmaId` param instead of `stateCode` for that row.
 
 import 'dotenv/config';
 import { createClient } from '@supabase/supabase-js';
@@ -16,9 +28,22 @@ if (!TICKETMASTER_API_KEY) {
 
 const supabase = createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY);
 
-const MARKET_SLUG = 'phoenix-tucson';
-const STATE_CODE = 'AZ';
+// Filtering EDM content out of Ticketmaster is a precision/recall tradeoff,
+// verified live both ways:
+//   - `classificationName=Dance/Electronic` (free-text, fuzzy-matched by TM
+//     across segment/genre/subgenre) has good recall but pulls in real noise
+//     — e.g. a Vegas stage show TM tags Music > Pop > Electro Pop.
+//   - `genreId=<Dance/Electronic>` (exact match against TM's own genre field)
+//     has good precision but WORSE recall — TM itself inconsistently tags
+//     genuine EDM headliners (RÜFÜS DU SOL, Griz, Gryffin, Bob Moses, Chasing
+//     Abbey, Slow Magic...) under Alternative/Pop/Rock instead, so genreId
+//     alone silently drops real festival-headliner-tier acts.
+// So: fetch both, union by Ticketmaster's own event id, and exclude the one
+// confirmed false positive by name. Add to EXCLUDED_TITLE_PATTERNS as new
+// false positives turn up rather than tightening the genre filter further.
+const DANCE_ELECTRONIC_GENRE_ID = 'KnvZfZ7vAvF';
 const CLASSIFICATION_NAME = 'Dance/Electronic';
+const EXCLUDED_TITLE_PATTERNS = [/jabbawockeez/i];
 const PAGE_SIZE = 199; // Ticketmaster's max page size
 const MAX_PAGES = 5; // free-tier keys reject deep paging past ~1000 results
 const REQUEST_DELAY_MS = 250; // stay comfortably under the 5 req/sec rate limit
@@ -29,11 +54,11 @@ const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 // Ticketmaster fetch
 // ---------------------------------------------------------------------------
 
-async function fetchEventsPage(page) {
+async function fetchEventsPage(stateCode, filterParam, filterValue, page) {
   const url = new URL('https://app.ticketmaster.com/discovery/v2/events.json');
   url.searchParams.set('apikey', TICKETMASTER_API_KEY);
-  url.searchParams.set('stateCode', STATE_CODE);
-  url.searchParams.set('classificationName', CLASSIFICATION_NAME);
+  url.searchParams.set('stateCode', stateCode);
+  url.searchParams.set(filterParam, filterValue);
   url.searchParams.set('size', String(PAGE_SIZE));
   url.searchParams.set('page', String(page));
   url.searchParams.set('sort', 'date,asc');
@@ -45,18 +70,18 @@ async function fetchEventsPage(page) {
   return res.json();
 }
 
-async function fetchAllEvents() {
+async function fetchAllEventsForFilter(stateCode, filterParam, filterValue) {
   const events = [];
   let page = 0;
   let totalPages = 1;
 
   while (page < totalPages) {
-    const data = await fetchEventsPage(page);
+    const data = await fetchEventsPage(stateCode, filterParam, filterValue, page);
     const pageEvents = data._embedded?.events ?? [];
     events.push(...pageEvents);
 
     totalPages = Math.min(data.page?.totalPages ?? 1, MAX_PAGES);
-    console.log(`Fetched page ${page + 1}/${totalPages} (${pageEvents.length} events)`);
+    console.log(`  [${filterParam}] page ${page + 1}/${totalPages} (${pageEvents.length} events)`);
 
     page += 1;
     if (page < totalPages) await sleep(REQUEST_DELAY_MS);
@@ -65,17 +90,34 @@ async function fetchAllEvents() {
   return events;
 }
 
+async function fetchAllEvents(stateCode) {
+  const byClassification = await fetchAllEventsForFilter(stateCode, 'classificationName', CLASSIFICATION_NAME);
+  await sleep(REQUEST_DELAY_MS);
+  const byGenre = await fetchAllEventsForFilter(stateCode, 'genreId', DANCE_ELECTRONIC_GENRE_ID);
+
+  const merged = new Map();
+  for (const e of [...byClassification, ...byGenre]) merged.set(e.id, e);
+
+  return [...merged.values()].filter(
+    (e) => !EXCLUDED_TITLE_PATTERNS.some((pattern) => pattern.test(e.name))
+  );
+}
+
 // ---------------------------------------------------------------------------
 // Supabase upsert helpers
 // ---------------------------------------------------------------------------
 
-async function getMarketId(slug) {
-  const { data, error } = await supabase.from('markets').select('id').eq('slug', slug).single();
+async function getActiveMarkets() {
+  const { data, error } = await supabase
+    .from('markets')
+    .select('id, slug, name, state')
+    .eq('is_active', true);
 
-  if (error || !data) {
-    throw new Error(`Market "${slug}" not found in Supabase — seed it before running the sync.`);
+  if (error) throw new Error(`Failed to load markets: ${error.message}`);
+  if (!data || data.length === 0) {
+    throw new Error('No active markets found in Supabase — seed at least one before running the sync.');
   }
-  return data.id;
+  return data;
 }
 
 // venues.name is UNIQUE, so a real upsert works here.
@@ -127,7 +169,7 @@ async function getOrCreatePromoter(name) {
 }
 
 // artists.name is UNIQUE. Only `name` is sent so existing spotify_id /
-// spotify_preview_url / genre_tags from the Vibe Check script are never clobbered.
+// deezer_id / genre_tags from the Vibe Check script are never clobbered.
 async function upsertArtist(name) {
   if (!name) return null;
 
@@ -157,12 +199,12 @@ function extractPromoterName(tmEvent) {
 async function syncEvent(tmEvent, marketId) {
   const tmVenue = tmEvent._embedded?.venues?.[0];
   if (!tmVenue) {
-    console.warn(`Skipping "${tmEvent.name}" — no venue data`);
+    console.warn(`  Skipping "${tmEvent.name}" — no venue data`);
     return;
   }
 
   if (!tmEvent.dates?.start?.localDate) {
-    console.warn(`Skipping "${tmEvent.name}" — no event_date`);
+    console.warn(`  Skipping "${tmEvent.name}" — no event_date`);
     return;
   }
 
@@ -189,7 +231,7 @@ async function syncEvent(tmEvent, marketId) {
     .single();
 
   if (eventError) {
-    console.error(`Event upsert failed for "${tmEvent.name}": ${eventError.message}`);
+    console.error(`  Event upsert failed for "${tmEvent.name}": ${eventError.message}`);
     return;
   }
 
@@ -207,30 +249,43 @@ async function syncEvent(tmEvent, marketId) {
 
     if (lineupError) {
       console.error(
-        `Lineup upsert failed for "${attractions[i].name}" @ "${tmEvent.name}": ${lineupError.message}`
+        `  Lineup upsert failed for "${attractions[i].name}" @ "${tmEvent.name}": ${lineupError.message}`
       );
     }
   }
 
-  console.log(`Synced: ${tmEvent.name} (${eventRecord.event_date})`);
+  console.log(`  Synced: ${tmEvent.name} (${eventRecord.event_date})`);
 }
 
-async function main() {
-  console.log(`Starting Ticketmaster sync for market "${MARKET_SLUG}"...`);
-  const marketId = await getMarketId(MARKET_SLUG);
+async function syncMarket(market) {
+  console.log(`\nMarket "${market.name}" (${market.slug}, ${market.state})...`);
 
-  const tmEvents = await fetchAllEvents();
-  console.log(`Fetched ${tmEvents.length} events from Ticketmaster.`);
+  const tmEvents = await fetchAllEvents(market.state);
+  console.log(`  Fetched ${tmEvents.length} events from Ticketmaster.`);
 
   for (const tmEvent of tmEvents) {
     try {
-      await syncEvent(tmEvent, marketId);
+      await syncEvent(tmEvent, market.id);
     } catch (err) {
-      console.error(`Error syncing "${tmEvent.name}":`, err.message);
+      console.error(`  Error syncing "${tmEvent.name}":`, err.message);
     }
   }
+}
 
-  console.log('Sync complete.');
+async function main() {
+  const markets = await getActiveMarkets();
+  console.log(`Starting Ticketmaster sync for ${markets.length} active market(s): ${markets.map((m) => m.slug).join(', ')}`);
+
+  for (const market of markets) {
+    try {
+      await syncMarket(market);
+    } catch (err) {
+      console.error(`Fatal error syncing market "${market.slug}":`, err.message);
+    }
+    await sleep(REQUEST_DELAY_MS);
+  }
+
+  console.log('\nSync complete.');
 }
 
 main().catch((err) => {

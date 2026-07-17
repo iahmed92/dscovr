@@ -1,0 +1,209 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>DSCOVR — Phoenix/Tucson Preview</title>
+<script src="https://cdn.tailwindcss.com"></script>
+<style>
+  body { background: #0b0b0f; }
+  .flyer-fallback {
+    background: linear-gradient(135deg, #1a1a2e, #16213e);
+  }
+  ::-webkit-scrollbar { width: 8px; }
+  ::-webkit-scrollbar-thumb { background: #3d3d52; border-radius: 4px; }
+</style>
+</head>
+<body class="text-zinc-100 font-sans min-h-screen">
+
+  <header class="sticky top-0 z-10 bg-[#0b0b0f]/90 backdrop-blur border-b border-zinc-800 px-4 py-4">
+    <div class="max-w-5xl mx-auto flex flex-col gap-3">
+      <div class="flex items-baseline justify-between flex-wrap gap-2">
+        <h1 class="text-2xl font-bold tracking-tight">DSCOVR <span class="text-zinc-500 font-normal text-base">· Phoenix / Tucson</span></h1>
+        <span id="event-count" class="text-sm text-zinc-500">Loading…</span>
+      </div>
+      <div class="flex gap-2 flex-wrap">
+        <input id="search" type="text" placeholder="Search title, venue, or artist…"
+          class="flex-1 min-w-[200px] bg-zinc-900 border border-zinc-700 rounded-lg px-3 py-2 text-sm outline-none focus:border-zinc-500" />
+        <select id="source-filter" class="bg-zinc-900 border border-zinc-700 rounded-lg px-3 py-2 text-sm outline-none focus:border-zinc-500">
+          <option value="all">All sources</option>
+          <option value="ticketmaster">Ticketmaster</option>
+          <option value="relentless_beats">Relentless Beats</option>
+        </select>
+      </div>
+    </div>
+  </header>
+
+  <main class="max-w-5xl mx-auto px-4 py-6">
+    <div id="status" class="text-zinc-400 text-sm mb-4"></div>
+    <div id="events" class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4"></div>
+  </main>
+
+  <script type="module">
+    import { createClient } from 'https://esm.sh/@supabase/supabase-js@2';
+
+    // Anon/public key — safe to embed client-side, gated by the read-only
+    // RLS policies already applied to every table.
+    const SUPABASE_URL = 'https://cdwuidqsoqorhlpobgnm.supabase.co';
+    const SUPABASE_ANON_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImNkd3VpZHFzb3FvcmhscG9iZ25tIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODQyMzc3NjcsImV4cCI6MjA5OTgxMzc2N30.CNfFg5fHiX9qbXULhyhskUD5nEEgW9P3_NGVL32q5JM';
+    // Matches the vibecheck Edge Function's route once deployed — no edits
+    // needed here after `supabase functions deploy vibecheck`.
+    const VIBECHECK_URL = `${SUPABASE_URL}/functions/v1/vibecheck`;
+
+    const supabase = createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
+
+    const SOURCE_LABEL = {
+      ticketmaster: { text: 'Ticketmaster', cls: 'bg-sky-900/60 text-sky-300' },
+      relentless_beats: { text: 'Relentless Beats', cls: 'bg-fuchsia-900/60 text-fuchsia-300' },
+      curated: { text: 'Curated', cls: 'bg-zinc-800 text-zinc-300' },
+    };
+
+    const statusEl = document.getElementById('status');
+    const countEl = document.getElementById('event-count');
+    const gridEl = document.getElementById('events');
+    const searchEl = document.getElementById('search');
+    const sourceFilterEl = document.getElementById('source-filter');
+
+    let allEvents = [];
+
+    function formatDate(dateStr) {
+      const d = new Date(`${dateStr}T00:00:00`);
+      return d.toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' });
+    }
+
+    function eventCard(event) {
+      const venue = event.venues;
+      const artists = (event.lineups ?? [])
+        .sort((a, b) => (a.performance_order ?? 0) - (b.performance_order ?? 0))
+        .map((l) => l.artists)
+        .filter(Boolean);
+
+      const source = SOURCE_LABEL[event.source_type] ?? SOURCE_LABEL.curated;
+
+      const card = document.createElement('div');
+      card.className = 'bg-zinc-900 border border-zinc-800 rounded-xl overflow-hidden flex flex-col';
+      card.dataset.searchText = [event.title, venue?.name, venue?.city, ...artists.map((a) => a.name)]
+        .filter(Boolean)
+        .join(' ')
+        .toLowerCase();
+      card.dataset.source = event.source_type;
+
+      const flyer = event.flyer_url
+        ? `<img src="${event.flyer_url}" alt="" class="w-full h-40 object-cover" loading="lazy" onerror="this.replaceWith(Object.assign(document.createElement('div'),{className:'w-full h-40 flyer-fallback flex items-center justify-center text-3xl font-bold text-zinc-600'}))" />`
+        : `<div class="w-full h-40 flyer-fallback flex items-center justify-center text-3xl font-bold text-zinc-600">${(event.title ?? '?')[0]}</div>`;
+
+      const artistChips = artists
+        .map(
+          (a) => `<button class="vibe-chip text-xs bg-zinc-800 hover:bg-zinc-700 rounded-full px-2.5 py-1 flex items-center gap-1 transition"
+                    data-artist-id="${a.id}" data-artist-name="${a.name}">
+                    <span>▶</span><span>${a.name}</span>
+                  </button>`
+        )
+        .join('');
+
+      card.innerHTML = `
+        ${flyer}
+        <div class="p-3 flex flex-col gap-2 flex-1">
+          <div class="flex items-center justify-between gap-2">
+            <span class="text-xs font-mono text-zinc-500">${formatDate(event.event_date)}</span>
+            <span class="text-[10px] uppercase tracking-wide rounded px-1.5 py-0.5 ${source.cls}">${source.text}</span>
+          </div>
+          <h3 class="font-semibold leading-snug">${event.title}</h3>
+          <p class="text-sm text-zinc-400">${venue?.name ?? 'Unknown venue'}${venue?.city ? ' · ' + venue.city : ''}</p>
+          ${artists.length ? `<div class="flex flex-wrap gap-1.5 mt-1">${artistChips}</div>` : ''}
+          <div class="mt-auto pt-2 flex items-center justify-between">
+            ${event.ticket_url ? `<a href="${event.ticket_url}" target="_blank" rel="noopener" class="text-xs text-emerald-400 hover:text-emerald-300">Tickets ↗</a>` : '<span></span>'}
+            <span class="vibe-status text-[10px] text-zinc-600"></span>
+          </div>
+        </div>
+      `;
+
+      card.querySelectorAll('.vibe-chip').forEach((chip) => {
+        chip.addEventListener('click', () => playVibeCheck(chip, card));
+      });
+
+      return card;
+    }
+
+    async function playVibeCheck(chip, card) {
+      const statusSpan = card.querySelector('.vibe-status');
+      const artistId = chip.dataset.artistId;
+      chip.disabled = true;
+      const original = chip.innerHTML;
+      chip.innerHTML = `<span>…</span><span>${chip.dataset.artistName}</span>`;
+
+      try {
+        const res = await fetch(`${VIBECHECK_URL}?artist_id=${artistId}`);
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+        const data = await res.json();
+
+        if (!data.preview_url) {
+          statusSpan.textContent = 'No preview available';
+        } else {
+          card.querySelectorAll('audio').forEach((a) => a.remove());
+          const audio = document.createElement('audio');
+          audio.src = data.preview_url;
+          audio.controls = true;
+          audio.autoplay = true;
+          audio.className = 'w-full mt-2';
+          card.querySelector('.mt-auto').before(audio);
+          statusSpan.textContent = `via ${data.source}`;
+        }
+      } catch (err) {
+        statusSpan.textContent = 'vibecheck fn not deployed yet';
+      } finally {
+        chip.disabled = false;
+        chip.innerHTML = original;
+      }
+    }
+
+    function render() {
+      const q = searchEl.value.trim().toLowerCase();
+      const sourceFilter = sourceFilterEl.value;
+
+      gridEl.innerHTML = '';
+      let visible = 0;
+
+      for (const event of allEvents) {
+        const card = eventCard(event);
+        const matchesSearch = !q || card.dataset.searchText.includes(q);
+        const matchesSource = sourceFilter === 'all' || card.dataset.source === sourceFilter;
+        if (matchesSearch && matchesSource) {
+          gridEl.appendChild(card);
+          visible++;
+        }
+      }
+
+      countEl.textContent = `${visible} / ${allEvents.length} events`;
+    }
+
+    async function load() {
+      statusEl.textContent = 'Loading events from Supabase…';
+
+      const { data, error } = await supabase
+        .from('events')
+        .select(
+          `id, title, event_date, ticket_url, flyer_url, source_type,
+           venues ( name, city ),
+           lineups ( performance_order, artists ( id, name, genre_tags ) )`
+        )
+        .order('event_date', { ascending: true });
+
+      if (error) {
+        statusEl.textContent = `Failed to load: ${error.message}`;
+        statusEl.className = 'text-red-400 text-sm mb-4';
+        return;
+      }
+
+      allEvents = data;
+      statusEl.textContent = '';
+      render();
+    }
+
+    searchEl.addEventListener('input', render);
+    sourceFilterEl.addEventListener('change', render);
+
+    load();
+  </script>
+</body>
+</html>
