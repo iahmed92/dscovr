@@ -1,0 +1,40 @@
+name: CI
+
+# Runs the same checks we've been running by hand: the migration harness
+# (every migration against real Postgres via PGlite, plus the function tests),
+# the Spotify taste-mapping unit test, and a mobile typecheck. No database
+# credentials needed — PGlite is in-process and the taste test is pure.
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      # Node 22 for `--experimental-strip-types`, which runs the taste test's
+      # real .ts source directly.
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: Install pipeline deps (migration harness)
+        run: npm install
+
+      - name: Migration harness (PGlite)
+        run: npm test
+
+      - name: Install mobile deps
+        working-directory: mobile
+        run: npm install
+
+      - name: Spotify taste-mapping unit test
+        working-directory: mobile
+        run: npm run test:taste
+
+      - name: Typecheck mobile
+        working-directory: mobile
+        run: npx tsc --noEmit
