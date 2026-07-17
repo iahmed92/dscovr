@@ -1,0 +1,21 @@
+{
+  "name": "dscovr",
+  "version": "1.0.0",
+  "main": "index.js",
+  "type": "module",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1",
+    "sync:ticketmaster": "node DSCOVR.js",
+    "sync:spotify": "node spotify-vibe-check.js",
+    "scrape:relentlessbeats": "node relentless-beats-scraper.js"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "description": "",
+  "dependencies": {
+    "@supabase/supabase-js": "^2.110.7",
+    "cheerio": "^1.2.0",
+    "dotenv": "^17.4.2"
+  }
+}

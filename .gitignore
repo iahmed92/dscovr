@@ -1,0 +1,28 @@
+# Dependencies
+node_modules/
+
+# Environment / secrets
+.env
+.env.local
+.env.*.local
+
+# Logs
+npm-debug.log*
+*.log
+
+# OS junk
+.DS_Store
+.DS_Store?
+._*
+Thumbs.db
+ehthumbs.db
+Desktop.ini
+$RECYCLE.BIN/
+
+# Editor
+.vscode/*
+!.vscode/extensions.json
+.idea/
+
+# Supabase CLI local state
+supabase/.temp/
