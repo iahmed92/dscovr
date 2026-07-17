@@ -23,12 +23,24 @@ const supabase = createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY);
 const MARKET = 'US';
 const RESULT_CACHE_SECONDS = 1800; // well under Deezer's URL expiry window
 
+// Supabase Edge Functions don't add CORS headers by default — without these,
+// the browser blocks the request at the preflight (OPTIONS) stage before it
+// ever reaches this handler. Only matters for web; native HTTP clients don't
+// enforce CORS, which is why this was invisible until actually driving the
+// web build in a real browser.
+const corsHeaders = {
+  'Access-Control-Allow-Origin': '*',
+  'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
+  'Access-Control-Allow-Methods': 'GET, OPTIONS',
+};
+
 const jsonResponse = (body: unknown, status = 200) =>
   new Response(JSON.stringify(body), {
     status,
     headers: {
       'Content-Type': 'application/json',
       'Cache-Control': `public, max-age=${RESULT_CACHE_SECONDS}`,
+      ...corsHeaders,
     },
   });
 
@@ -94,6 +106,10 @@ async function resolveDeezerPreview(deezerId: string): Promise<string | null> {
 // ---------------------------------------------------------------------------
 
 Deno.serve(async (req: Request) => {
+  if (req.method === 'OPTIONS') {
+    return new Response(null, { headers: corsHeaders });
+  }
+
   const url = new URL(req.url);
   const artistId = url.searchParams.get('artist_id');
 
