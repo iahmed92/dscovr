@@ -4,6 +4,7 @@ import { ActivityIndicator, Platform, ScrollView, StyleSheet, TouchableOpacity, 
 import { SafeAreaView } from 'react-native-safe-area-context';
 
 import { ShowRow } from '@/components/show-row';
+import { SpotifyConnectCard } from '@/components/spotify-connect-card';
 import { ThemedText } from '@/components/themed-text';
 import { ThemedView } from '@/components/themed-view';
 import { BottomTabInset, MaxContentWidth, Spacing } from '@/constants/theme';
@@ -82,6 +83,8 @@ export default function AccountScreen() {
                   ›
                 </ThemedText>
               </TouchableOpacity>
+
+              <SpotifyConnectCard />
 
               {loading && upcoming.length === 0 && past.length === 0 ? (
                 <ActivityIndicator style={styles.loader} />
