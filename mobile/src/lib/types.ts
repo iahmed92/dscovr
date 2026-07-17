@@ -17,6 +17,15 @@ export type LineupSlot = {
   artists: Artist | null;
 };
 
+export type Venue = {
+  name: string;
+  address: string | null;
+  city: string | null;
+  latitude: number | null;
+  longitude: number | null;
+  website: string | null;
+};
+
 export type EventWithDetails = {
   id: number;
   title: string;
@@ -25,6 +34,6 @@ export type EventWithDetails = {
   ticket_url: string | null;
   flyer_url: string | null;
   source_type: string;
-  venues: { name: string; city: string | null } | null;
+  venues: Venue | null;
   lineups: LineupSlot[];
 };

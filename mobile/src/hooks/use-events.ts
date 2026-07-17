@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
 
+import { EVENT_SELECT } from '@/lib/queries';
 import { supabase } from '@/lib/supabase';
 import { EventWithDetails } from '@/lib/types';
 
@@ -33,14 +34,15 @@ export function useEvents(marketId: number | null) {
 
       const { data, error: fetchError } = await supabase
         .from('events')
-        .select(
-          `id, title, event_date, doors_time, ticket_url, flyer_url, source_type,
-           venues!inner ( name, city, market_id ),
-           lineups ( performance_order, artists ( id, name, spotify_url, soundcloud_url ) )`
-        )
+        .select(EVENT_SELECT)
         .eq('venues.market_id', marketId)
         .gte('event_date', todayDateString())
         .order('event_date', { ascending: true })
+        // event_date alone leaves same-day shows unordered, so Postgres is free
+        // to return them differently on each refetch and the feed reshuffles
+        // under the user. doors_time then id makes the order total.
+        .order('doors_time', { ascending: true, nullsFirst: false })
+        .order('id', { ascending: true })
         .order('performance_order', { referencedTable: 'lineups', ascending: true })
         .limit(100);
 

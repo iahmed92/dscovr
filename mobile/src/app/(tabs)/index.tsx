@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { ActivityIndicator, FlatList, StyleSheet } from 'react-native';
+import { ActivityIndicator, FlatList, Platform, StyleSheet } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
 import { EventCard } from '@/components/event-card';
@@ -30,10 +30,12 @@ export default function HomeScreen() {
   return (
     <ThemedView style={styles.container}>
       <SafeAreaView style={styles.safeArea} edges={['top']}>
-        <ThemedView style={styles.header}>
-          <ThemedText type="title" style={styles.heading}>
-            DSCOVR
-          </ThemedText>
+        <ThemedView style={[styles.header, Platform.OS === 'web' && styles.headerWeb]}>
+          {Platform.OS !== 'web' && (
+            <ThemedText type="title" style={styles.heading}>
+              DSCOVR
+            </ThemedText>
+          )}
           <MarketPicker
             markets={markets}
             selectedId={selectedMarketId}
@@ -86,6 +88,12 @@ const styles = StyleSheet.create({
   header: {
     gap: Spacing.two,
     paddingTop: Spacing.two,
+  },
+  // Web puts the tab bar in a floating pill pinned to the top that already
+  // carries the DSCOVR brand, so the heading above is native-only and the
+  // content clears the pill instead — same inset explore.tsx uses.
+  headerWeb: {
+    paddingTop: Spacing.six,
   },
   heading: {
     paddingHorizontal: Spacing.three,

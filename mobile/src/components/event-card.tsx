@@ -1,4 +1,5 @@
 import { Image } from 'expo-image';
+import { Link } from 'expo-router';
 import { Linking, StyleSheet, TouchableOpacity, View } from 'react-native';
 
 import { ArtistLineup } from '@/components/artist-lineup';
@@ -26,37 +27,43 @@ export function EventCard({ event }: { event: EventWithDetails }) {
 
   return (
     <ThemedView type="backgroundElement" style={styles.card}>
-      {event.flyer_url ? (
-        <Image source={{ uri: event.flyer_url }} style={styles.flyer} contentFit="cover" />
-      ) : (
-        <View style={[styles.flyer, styles.flyerFallback, { backgroundColor: theme.backgroundSelected }]}>
-          <ThemedText type="title" themeColor="textSecondary">
-            {event.title.charAt(0)}
-          </ThemedText>
-        </View>
-      )}
+      <Link href={`/event/${event.id}`} asChild>
+        <TouchableOpacity accessibilityRole="button" accessibilityLabel={`View ${event.title}`}>
+          {event.flyer_url ? (
+            <Image source={{ uri: event.flyer_url }} style={styles.flyer} contentFit="cover" />
+          ) : (
+            <View style={[styles.flyer, styles.flyerFallback, { backgroundColor: theme.backgroundSelected }]}>
+              <ThemedText type="title" themeColor="textSecondary">
+                {event.title.charAt(0)}
+              </ThemedText>
+            </View>
+          )}
+
+          <View style={styles.cardTextBlock}>
+            <View style={styles.metaRow}>
+              <ThemedText type="small" themeColor="textSecondary">
+                {formatEventDate(event.event_date)}
+              </ThemedText>
+              <ThemedText type="small" themeColor="textSecondary">
+                {SOURCE_LABEL[event.source_type] ?? event.source_type}
+              </ThemedText>
+            </View>
+
+            <ThemedText type="subtitle" style={styles.title} numberOfLines={2}>
+              {event.title}
+            </ThemedText>
+
+            {event.venues && (
+              <ThemedText type="default" themeColor="textSecondary">
+                {event.venues.name}
+                {event.venues.city ? ` · ${event.venues.city}` : ''}
+              </ThemedText>
+            )}
+          </View>
+        </TouchableOpacity>
+      </Link>
 
       <View style={styles.body}>
-        <View style={styles.metaRow}>
-          <ThemedText type="small" themeColor="textSecondary">
-            {formatEventDate(event.event_date)}
-          </ThemedText>
-          <ThemedText type="small" themeColor="textSecondary">
-            {SOURCE_LABEL[event.source_type] ?? event.source_type}
-          </ThemedText>
-        </View>
-
-        <ThemedText type="subtitle" style={styles.title} numberOfLines={2}>
-          {event.title}
-        </ThemedText>
-
-        {event.venues && (
-          <ThemedText type="default" themeColor="textSecondary">
-            {event.venues.name}
-            {event.venues.city ? ` · ${event.venues.city}` : ''}
-          </ThemedText>
-        )}
-
         {artists.length > 0 && (
           <View style={styles.lineupSection}>
             <ArtistLineup artists={artists} />
@@ -86,8 +93,14 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
   },
-  body: {
+  cardTextBlock: {
     padding: Spacing.three,
+    paddingBottom: 0,
+    gap: Spacing.one,
+  },
+  body: {
+    paddingHorizontal: Spacing.three,
+    paddingBottom: Spacing.three,
     gap: Spacing.one,
   },
   metaRow: {
