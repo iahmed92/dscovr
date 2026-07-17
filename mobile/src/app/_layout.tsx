@@ -3,6 +3,7 @@ import * as SplashScreen from 'expo-splash-screen';
 import { useColorScheme } from 'react-native';
 
 import { AnimatedSplashOverlay } from '@/components/animated-icon';
+import { AuthProvider } from '@/hooks/use-auth';
 import { NowPlayingProvider } from '@/hooks/use-now-playing';
 import { useTheme } from '@/hooks/use-theme';
 
@@ -14,21 +15,27 @@ export default function RootLayout() {
 
   return (
     <ThemeProvider value={colorScheme === 'dark' ? DarkTheme : DefaultTheme}>
-      <NowPlayingProvider>
-        <AnimatedSplashOverlay />
-        <Stack
-          screenOptions={{
-            headerStyle: { backgroundColor: theme.background },
-            headerTintColor: theme.text,
-            headerShadowVisible: false,
-          }}>
-          <Stack.Screen name="(tabs)" options={{ headerShown: false }} />
-          <Stack.Screen
-            name="event/[id]"
-            options={{ title: '', headerBackTitle: 'Back', presentation: 'card' }}
-          />
-        </Stack>
-      </NowPlayingProvider>
+      <AuthProvider>
+        <NowPlayingProvider>
+          <AnimatedSplashOverlay />
+          <Stack
+            screenOptions={{
+              headerStyle: { backgroundColor: theme.background },
+              headerTintColor: theme.text,
+              headerShadowVisible: false,
+            }}>
+            <Stack.Screen name="(tabs)" options={{ headerShown: false }} />
+            <Stack.Screen
+              name="event/[id]"
+              options={{ title: '', headerBackTitle: 'Back', presentation: 'card' }}
+            />
+            <Stack.Screen
+              name="sign-in"
+              options={{ title: 'Sign in', presentation: 'modal' }}
+            />
+          </Stack>
+        </NowPlayingProvider>
+      </AuthProvider>
     </ThemeProvider>
   );
 }

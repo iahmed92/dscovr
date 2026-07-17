@@ -4,6 +4,7 @@ import { ActivityIndicator, Linking, ScrollView, StyleSheet, TouchableOpacity, V
 import { SafeAreaView } from 'react-native-safe-area-context';
 
 import { ArtistLineup } from '@/components/artist-lineup';
+import { AttendanceButton } from '@/components/attendance-button';
 import { ThemedText } from '@/components/themed-text';
 import { ThemedView } from '@/components/themed-view';
 import { MaxContentWidth, Spacing } from '@/constants/theme';
@@ -96,15 +97,19 @@ export default function EventDetailScreen() {
               </TouchableOpacity>
             )}
 
-            {event.ticket_url && (
-              <TouchableOpacity
-                onPress={() => Linking.openURL(event.ticket_url!)}
-                style={[styles.ticketButton, { backgroundColor: theme.text }]}>
-                <ThemedText type="smallBold" style={{ color: theme.background }}>
-                  Get Tickets
-                </ThemedText>
-              </TouchableOpacity>
-            )}
+            <View style={styles.actions}>
+              <AttendanceButton eventId={event.id} />
+
+              {event.ticket_url && (
+                <TouchableOpacity
+                  onPress={() => Linking.openURL(event.ticket_url!)}
+                  style={[styles.ticketButton, { backgroundColor: theme.text }]}>
+                  <ThemedText type="smallBold" style={{ color: theme.background }}>
+                    Get Tickets
+                  </ThemedText>
+                </TouchableOpacity>
+              )}
+            </View>
 
             {artists.length > 0 && (
               <View style={styles.lineupSection}>
@@ -166,8 +171,11 @@ const styles = StyleSheet.create({
   mapsLink: {
     marginTop: Spacing.half,
   },
-  ticketButton: {
+  actions: {
     marginTop: Spacing.two,
+    gap: Spacing.two,
+  },
+  ticketButton: {
     paddingVertical: Spacing.three,
     borderRadius: Spacing.three,
     alignItems: 'center',
