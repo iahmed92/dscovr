@@ -37,6 +37,7 @@ export default function RootLayout() {
               name="for-you"
               options={{ title: 'For you', headerBackTitle: 'Back' }}
             />
+            <Stack.Screen name="spotify-callback" options={{ headerShown: false }} />
           </Stack>
         </NowPlayingProvider>
       </AuthProvider>
