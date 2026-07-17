@@ -256,6 +256,29 @@ await db.query(`INSERT INTO lineups (event_id, artist_id, performance_order) VAL
 const feed = async (tf, vibe) =>
   (await db.query(`SELECT title, vibes FROM get_filtered_events('test-market', $1, $2)`, [tf, vibe])).rows.map((r) => r.title);
 
+// The feed cards need more than names: an id for Vibe Check playback and the
+// profile urls for the icons. 0009 exists because 0008 returned names only.
+const lineupRow = (await db.query(
+  `SELECT artists FROM get_filtered_events('test-market', 'all', null) WHERE title = 'Tonight Techno'`)).rows[0];
+const lineup = lineupRow.artists;
+check('artists is a JSON array on the feed row', Array.isArray(lineup) && lineup.length === 1, JSON.stringify(lineup));
+check('lineup artist carries id', typeof lineup[0]?.id === 'number', JSON.stringify(lineup[0]));
+check('lineup artist carries name', lineup[0]?.name === 'Techno Person');
+check('lineup artist carries the profile url fields', 'spotify_url' in (lineup[0] ?? {}) && 'soundcloud_url' in (lineup[0] ?? {}));
+
+const emptyLineup = (await db.query(
+  `SELECT artists FROM get_filtered_events('test-market', 'all', null) WHERE title = 'Test Show'`)).rows[0].artists;
+check('event with no lineup returns [] not null', Array.isArray(emptyLineup) && emptyLineup.length === 0, JSON.stringify(emptyLineup));
+
+// Billing order is the DB's job; the client should not have to re-sort.
+await db.query(`INSERT INTO artists (name, genre_tags) VALUES ('Opener Person', ARRAY['techno']::varchar[])`);
+await db.query(`INSERT INTO lineups (event_id, artist_id, performance_order)
+  VALUES ((SELECT id FROM events WHERE title='Tonight Techno'), (SELECT id FROM artists WHERE name='Opener Person'), 0)`);
+const ordered = (await db.query(
+  `SELECT artists FROM get_filtered_events('test-market', 'all', null) WHERE title = 'Tonight Techno'`)).rows[0].artists;
+check('lineup comes back in performance_order',
+  ordered.map((a) => a.name).join(',') === 'Opener Person,Techno Person', JSON.stringify(ordered.map((a) => a.name)));
+
 const todayFeed = await feed('today', null);
 check("timeframe 'today' returns only today's show", todayFeed.length === 1 && todayFeed[0] === 'Tonight Techno', JSON.stringify(todayFeed));
 

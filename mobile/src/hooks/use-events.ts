@@ -1,27 +1,60 @@
 import { useEffect, useState } from 'react';
 
-import { EVENT_SELECT } from '@/lib/queries';
 import { supabase } from '@/lib/supabase';
-import { EventWithDetails } from '@/lib/types';
+import { EventWithDetails, FilteredEventRow, Timeframe, Vibe } from '@/lib/types';
 
-// Local calendar date, not UTC — event_date is stored as the show's local
-// calendar date, so a UTC-based "today" (toISOString) can be off by a day
-// near midnight, same pitfall the ingestion scripts already guard against.
-function todayDateString(): string {
-  const now = new Date();
-  const year = now.getFullYear();
-  const month = String(now.getMonth() + 1).padStart(2, '0');
-  const day = String(now.getDate()).padStart(2, '0');
-  return `${year}-${month}-${day}`;
+// The feed reads through get_filtered_events rather than selecting events
+// directly: timeframe and vibe filtering happen in Postgres, so a filter change
+// costs one round trip instead of shipping every upcoming show to the client
+// and narrowing it here. Ordering (event_date, doors_time, id) lives in the
+// function too — same total order the old query needed to stop the list
+// reshuffling under the user.
+//
+// The detail screen still uses a plain select (use-event.ts); it wants one
+// event by id, which is not what this function is for.
+function toEventWithDetails(row: FilteredEventRow): EventWithDetails {
+  return {
+    id: row.event_id,
+    title: row.title,
+    event_date: row.event_date,
+    doors_time: row.doors_time,
+    ticket_url: row.ticket_url,
+    flyer_url: row.flyer_url,
+    source_type: row.source_type,
+    // The feed only ever renders name and city; the detail screen fetches the
+    // address and coordinates it needs for the Maps link.
+    venues: row.venue_name
+      ? {
+          name: row.venue_name,
+          city: row.venue_city,
+          address: null,
+          latitude: null,
+          longitude: null,
+          website: null,
+        }
+      : null,
+    // Already ordered by performance_order in SQL — kept in the LineupSlot
+    // shape so EventCard and the detail screen consume the same thing.
+    lineups: (row.artists ?? []).map((artist) => ({
+      performance_order: artist.performance_order,
+      artists: {
+        id: artist.id,
+        name: artist.name,
+        spotify_url: artist.spotify_url,
+        soundcloud_url: artist.soundcloud_url,
+      },
+    })),
+    vibes: row.vibes ?? [],
+  };
 }
 
-export function useEvents(marketId: number | null) {
+export function useEvents(marketSlug: string | null, timeframe: Timeframe, vibe: Vibe | null) {
   const [events, setEvents] = useState<EventWithDetails[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
-    if (marketId === null) {
+    if (marketSlug === null) {
       setEvents([]);
       setLoading(false);
       return;
@@ -32,26 +65,18 @@ export function useEvents(marketId: number | null) {
     async function load() {
       setLoading(true);
 
-      const { data, error: fetchError } = await supabase
-        .from('events')
-        .select(EVENT_SELECT)
-        .eq('venues.market_id', marketId)
-        .gte('event_date', todayDateString())
-        .order('event_date', { ascending: true })
-        // event_date alone leaves same-day shows unordered, so Postgres is free
-        // to return them differently on each refetch and the feed reshuffles
-        // under the user. doors_time then id makes the order total.
-        .order('doors_time', { ascending: true, nullsFirst: false })
-        .order('id', { ascending: true })
-        .order('performance_order', { referencedTable: 'lineups', ascending: true })
-        .limit(100);
+      const { data, error: fetchError } = await supabase.rpc('get_filtered_events', {
+        market_slug: marketSlug,
+        timeframe,
+        vibe_filter: vibe,
+      });
 
       if (cancelled) return;
 
       if (fetchError) {
         setError(fetchError.message);
       } else {
-        setEvents((data as unknown as EventWithDetails[]) ?? []);
+        setEvents(((data ?? []) as FilteredEventRow[]).map(toEventWithDetails));
         setError(null);
       }
       setLoading(false);
@@ -61,7 +86,7 @@ export function useEvents(marketId: number | null) {
     return () => {
       cancelled = true;
     };
-  }, [marketId]);
+  }, [marketSlug, timeframe, vibe]);
 
   return { events, loading, error };
 }

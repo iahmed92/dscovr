@@ -3,18 +3,38 @@ import { ActivityIndicator, FlatList, Platform, StyleSheet } from 'react-native'
 import { SafeAreaView } from 'react-native-safe-area-context';
 
 import { EventCard } from '@/components/event-card';
+import { FilterChips } from '@/components/filter-chips';
 import { MarketPicker } from '@/components/market-picker';
 import { ThemedText } from '@/components/themed-text';
 import { ThemedView } from '@/components/themed-view';
 import { BottomTabInset, MaxContentWidth, Spacing } from '@/constants/theme';
 import { useEvents } from '@/hooks/use-events';
 import { useMarkets } from '@/hooks/use-markets';
+import {
+  TIMEFRAMES,
+  TIMEFRAME_LABELS,
+  Timeframe,
+  VIBES,
+  VIBE_LABELS,
+  Vibe,
+} from '@/lib/types';
 
 const DEFAULT_MARKET_SLUG = 'phoenix-tucson';
+
+const TIMEFRAME_OPTIONS = TIMEFRAMES.map((value) => ({ value, label: TIMEFRAME_LABELS[value] }));
+// 'all' is a first-class option rather than a deselect: roughly half of events
+// carry no vibe at all (genre_tags only exist where Spotify matched), so a vibe
+// filter always hides a large chunk of the feed and needs an obvious way out.
+const VIBE_OPTIONS: { value: Vibe | 'all'; label: string }[] = [
+  { value: 'all', label: 'All vibes' },
+  ...VIBES.map((value) => ({ value: value as Vibe | 'all', label: VIBE_LABELS[value] })),
+];
 
 export default function HomeScreen() {
   const { markets, loading: marketsLoading, error: marketsError } = useMarkets();
   const [selectedMarketId, setSelectedMarketId] = useState<number | null>(null);
+  const [timeframe, setTimeframe] = useState<Timeframe>('all');
+  const [vibe, setVibe] = useState<Vibe | 'all'>('all');
 
   useEffect(() => {
     if (selectedMarketId !== null || markets.length === 0) return;
@@ -22,7 +42,14 @@ export default function HomeScreen() {
     setSelectedMarketId(defaultMarket.id);
   }, [markets, selectedMarketId]);
 
-  const { events, loading: eventsLoading, error: eventsError } = useEvents(selectedMarketId);
+  // get_filtered_events keys off the slug, not the id.
+  const marketSlug = markets.find((m) => m.id === selectedMarketId)?.slug ?? null;
+
+  const { events, loading: eventsLoading, error: eventsError } = useEvents(
+    marketSlug,
+    timeframe,
+    vibe === 'all' ? null : vibe
+  );
 
   const loading = marketsLoading || (eventsLoading && events.length === 0);
   const error = marketsError ?? eventsError;
@@ -41,6 +68,18 @@ export default function HomeScreen() {
             selectedId={selectedMarketId}
             onSelect={setSelectedMarketId}
           />
+          <FilterChips
+            options={TIMEFRAME_OPTIONS}
+            selected={timeframe}
+            onSelect={setTimeframe}
+            accessibilityLabel="Filter by timeframe"
+          />
+          <FilterChips
+            options={VIBE_OPTIONS}
+            selected={vibe}
+            onSelect={setVibe}
+            accessibilityLabel="Filter by vibe"
+          />
         </ThemedView>
 
         {error && (
@@ -57,7 +96,17 @@ export default function HomeScreen() {
 
         {!error && !loading && events.length === 0 && (
           <ThemedView style={styles.centered}>
-            <ThemedText themeColor="textSecondary">No upcoming events in this market yet.</ThemedText>
+            <ThemedText themeColor="textSecondary" style={styles.emptyText}>
+              {timeframe === 'all' && vibe === 'all'
+                ? 'No upcoming events in this market yet.'
+                : 'No events match these filters.'}
+            </ThemedText>
+            {vibe !== 'all' && (
+              <ThemedText type="small" themeColor="textSecondary" style={styles.emptyText}>
+                Only artists we matched on Spotify carry a vibe, so some shows won&apos;t appear
+                under one.
+              </ThemedText>
+            )}
           </ThemedView>
         )}
 
@@ -103,6 +152,10 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
     padding: Spacing.four,
+    gap: Spacing.two,
+  },
+  emptyText: {
+    textAlign: 'center',
   },
   list: {
     padding: Spacing.three,

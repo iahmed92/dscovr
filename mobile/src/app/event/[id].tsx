@@ -9,19 +9,21 @@ import { ThemedView } from '@/components/themed-view';
 import { MaxContentWidth, Spacing } from '@/constants/theme';
 import { useEvent } from '@/hooks/use-event';
 import { useTheme } from '@/hooks/use-theme';
+import { lineupArtists, sourceLabel } from '@/lib/event-display';
 import { formatEventDate, formatEventTime } from '@/lib/format-date';
 import { mapsUrl } from '@/lib/maps';
-
-const SOURCE_LABEL: Record<string, string> = {
-  ticketmaster: 'Ticketmaster',
-  relentless_beats: 'Relentless Beats',
-  curated: 'Curated',
-};
 
 export default function EventDetailScreen() {
   const { id } = useLocalSearchParams<{ id: string }>();
   const theme = useTheme();
-  const { event, loading, error } = useEvent(id ? Number(id) : null);
+
+  // Number('abc') is NaN, which is truthy enough to reach the query and comes
+  // back as the Postgres error "invalid input syntax for type integer: NaN".
+  // A non-numeric id in the URL is just a bad link — treat it as not found.
+  const parsedId = Number(id);
+  const eventId = id && Number.isInteger(parsedId) && parsedId > 0 ? parsedId : null;
+
+  const { event, loading, error } = useEvent(eventId);
 
   if (loading) {
     return (
@@ -41,11 +43,7 @@ export default function EventDetailScreen() {
     );
   }
 
-  const artists = event.lineups
-    .slice()
-    .sort((a, b) => (a.performance_order ?? 0) - (b.performance_order ?? 0))
-    .map((slot) => slot.artists)
-    .filter((artist): artist is NonNullable<typeof artist> => artist !== null);
+  const artists = lineupArtists(event.lineups);
 
   const venueMapsUrl = event.venues ? mapsUrl(event.venues) : null;
 
@@ -70,7 +68,7 @@ export default function EventDetailScreen() {
                 {event.doors_time ? ` · ${formatEventTime(event.doors_time)}` : ''}
               </ThemedText>
               <ThemedText type="small" themeColor="textSecondary">
-                {SOURCE_LABEL[event.source_type] ?? event.source_type}
+                {sourceLabel(event.source_type)}
               </ThemedText>
             </View>
 

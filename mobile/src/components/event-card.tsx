@@ -7,23 +7,14 @@ import { ThemedText } from '@/components/themed-text';
 import { ThemedView } from '@/components/themed-view';
 import { Spacing } from '@/constants/theme';
 import { useTheme } from '@/hooks/use-theme';
+import { lineupArtists, sourceLabel } from '@/lib/event-display';
 import { formatEventDate } from '@/lib/format-date';
 import { EventWithDetails } from '@/lib/types';
-
-const SOURCE_LABEL: Record<string, string> = {
-  ticketmaster: 'Ticketmaster',
-  relentless_beats: 'Relentless Beats',
-  curated: 'Curated',
-};
 
 export function EventCard({ event }: { event: EventWithDetails }) {
   const theme = useTheme();
 
-  const artists = event.lineups
-    .slice()
-    .sort((a, b) => (a.performance_order ?? 0) - (b.performance_order ?? 0))
-    .map((slot) => slot.artists)
-    .filter((artist): artist is NonNullable<typeof artist> => artist !== null);
+  const artists = lineupArtists(event.lineups);
 
   return (
     <ThemedView type="backgroundElement" style={styles.card}>
@@ -45,7 +36,7 @@ export function EventCard({ event }: { event: EventWithDetails }) {
                 {formatEventDate(event.event_date)}
               </ThemedText>
               <ThemedText type="small" themeColor="textSecondary">
-                {SOURCE_LABEL[event.source_type] ?? event.source_type}
+                {sourceLabel(event.source_type)}
               </ThemedText>
             </View>
 

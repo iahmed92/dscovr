@@ -11,6 +11,9 @@ export function useEvent(eventId: number | null) {
 
   useEffect(() => {
     if (eventId === null) {
+      // Clear the previous event too — otherwise a stale one keeps rendering
+      // while the hook reports nothing is selected.
+      setEvent(null);
       setLoading(false);
       return;
     }
@@ -25,14 +28,18 @@ export function useEvent(eventId: number | null) {
         .select(EVENT_SELECT)
         .eq('id', eventId)
         .order('performance_order', { referencedTable: 'lineups', ascending: true })
-        .single();
+        // maybeSingle, not single: single() treats "no rows" as an error, so a
+        // link to a deleted or mistyped event surfaced the raw Postgres text
+        // ("Cannot coerce the result to a single JSON object") instead of the
+        // screen's own not-found copy. Missing is a normal outcome here.
+        .maybeSingle();
 
       if (cancelled) return;
 
       if (fetchError) {
         setError(fetchError.message);
       } else {
-        setEvent(data as unknown as EventWithDetails);
+        setEvent((data as unknown as EventWithDetails) ?? null);
         setError(null);
       }
       setLoading(false);
