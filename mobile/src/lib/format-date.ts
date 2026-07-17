@@ -7,6 +7,18 @@ export function formatEventDate(dateStr: string): string {
   return date.toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' });
 }
 
+// Today as a 'YYYY-MM-DD' string in local time, for comparing against
+// event_date (which is a bare calendar date). Built from parts, not
+// toISOString(), which is UTC and would flip the day near midnight — the same
+// pitfall the ingestion scripts guard against.
+export function todayLocalDateString(): string {
+  const now = new Date();
+  const year = now.getFullYear();
+  const month = String(now.getMonth() + 1).padStart(2, '0');
+  const day = String(now.getDate()).padStart(2, '0');
+  return `${year}-${month}-${day}`;
+}
+
 // doors_time is a Postgres TIME string ("20:00:00") — a plain wall-clock
 // time with no date/timezone attached, so it's parsed as parts too rather
 // than routed through Date parsing.
