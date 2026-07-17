@@ -5,6 +5,7 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 
 import { ArtistLineup } from '@/components/artist-lineup';
 import { AttendanceButton } from '@/components/attendance-button';
+import { FriendsGoing } from '@/components/friends-going';
 import { ThemedText } from '@/components/themed-text';
 import { ThemedView } from '@/components/themed-view';
 import { MaxContentWidth, Spacing } from '@/constants/theme';
@@ -99,6 +100,7 @@ export default function EventDetailScreen() {
 
             <View style={styles.actions}>
               <AttendanceButton eventId={event.id} />
+              <FriendsGoing eventId={event.id} />
 
               {event.ticket_url && (
                 <TouchableOpacity

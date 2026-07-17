@@ -364,6 +364,95 @@ check('already-logged events are excluded from recommendations', !recIds.include
 const noTaste = (await db.query(`SELECT * FROM get_personalized_recommendations($1, 1)`, [u2])).rows;
 check('user with no taste profile gets no recommendations', noTaste.length === 0);
 
+console.log('\n--- friend graph ---');
+// Fresh users with known usernames (the trigger derives username from metadata).
+for (const name of ['alice', 'bob', 'carol', 'dave']) {
+  await db.query(`INSERT INTO auth.users (email, raw_user_meta_data) VALUES ($1, $2)`,
+    [`${name}@x.com`, JSON.stringify({ username: name })]);
+}
+const idOf = Object.fromEntries(
+  (await db.query(`SELECT id, username FROM profiles WHERE username IN ('alice','bob','carol','dave')`)).rows.map((r) => [r.username, r.id])
+);
+// auth.uid() in every function reads this GUC; set it to impersonate.
+const as = async (uid) => db.exec(`SELECT set_config('test.uid', '${uid}', false)`);
+const rpc1 = async (sql, params) => (await db.query(sql, params)).rows[0];
+
+await as(idOf.alice);
+check('send to unknown username -> not_found',
+  (await rpc1(`SELECT send_friend_request('nobody') AS r`)).r === 'not_found');
+check('send to self -> self',
+  (await rpc1(`SELECT send_friend_request('alice') AS r`)).r === 'self');
+check('send to bob -> sent',
+  (await rpc1(`SELECT send_friend_request('bob') AS r`)).r === 'sent');
+check('sending again while pending -> already_pending',
+  (await rpc1(`SELECT send_friend_request('bob') AS r`)).r === 'already_pending');
+
+// Bob sees the incoming request; Alice (the requester) does not.
+await as(idOf.bob);
+const bobIncoming = (await db.query(`SELECT request_id, username FROM list_incoming_requests()`)).rows;
+check('recipient sees the incoming request', bobIncoming.length === 1 && bobIncoming[0].username === 'alice', JSON.stringify(bobIncoming));
+await as(idOf.alice);
+check('requester does not see it as incoming',
+  (await db.query(`SELECT * FROM list_incoming_requests()`)).rows.length === 0);
+
+// Consent: the requester cannot accept their own request.
+let selfAcceptBlocked = false;
+try { await db.query(`SELECT respond_to_friend_request($1, true)`, [bobIncoming[0].request_id]); }
+catch { selfAcceptBlocked = true; }
+check('requester cannot accept their own request', selfAcceptBlocked);
+
+// Bob accepts.
+await as(idOf.bob);
+check('recipient accepts -> accepted',
+  (await rpc1(`SELECT respond_to_friend_request($1, true) AS r`, [bobIncoming[0].request_id]).then((r) => r)).r === 'accepted');
+
+// Both now list each other as friends.
+await as(idOf.alice);
+const aliceFriends = (await db.query(`SELECT username FROM list_friends()`)).rows.map((r) => r.username);
+check('alice lists bob as friend', aliceFriends.includes('bob'), JSON.stringify(aliceFriends));
+await as(idOf.bob);
+const bobFriends = (await db.query(`SELECT username FROM list_friends()`)).rows.map((r) => r.username);
+check('bob lists alice as friend', bobFriends.includes('alice'), JSON.stringify(bobFriends));
+
+await as(idOf.alice);
+check('re-sending to an accepted friend -> already_friends',
+  (await rpc1(`SELECT send_friend_request('bob') AS r`)).r === 'already_friends');
+
+// Reverse-pending auto-accept: carol requests alice, then alice sends to carol.
+await as(idOf.carol);
+await db.query(`SELECT send_friend_request('alice')`);
+await as(idOf.alice);
+check('sending back to a pending requester -> accepted',
+  (await rpc1(`SELECT send_friend_request('carol') AS r`)).r === 'accepted');
+check('alice now has two friends', (await db.query(`SELECT * FROM list_friends()`)).rows.length === 2);
+
+// Unfriend.
+check('remove_friend drops the edge',
+  await db.query(`SELECT remove_friend($1)`, [idOf.carol]).then(async () =>
+    (await db.query(`SELECT username FROM list_friends()`)).rows.every((r) => r.username !== 'carol')));
+
+console.log('\n--- friends_going: social proof, friends only ---');
+// alice & bob are friends. dave is a stranger to alice. All three RSVP event 1.
+await db.query(`INSERT INTO event_attendance (user_id, event_id, status) VALUES
+  ($1, 1, 'going'), ($2, 1, 'going'), ($3, 1, 'going')
+  ON CONFLICT (user_id, event_id) DO NOTHING`, [idOf.alice, idOf.bob, idOf.dave]);
+
+await as(idOf.alice);
+const aliceSeesGoing = (await db.query(`SELECT username FROM friends_going(1)`)).rows.map((r) => r.username);
+check('alice sees her friend bob going', aliceSeesGoing.includes('bob'), JSON.stringify(aliceSeesGoing));
+check('alice does NOT see the stranger dave', !aliceSeesGoing.includes('dave'), JSON.stringify(aliceSeesGoing));
+check('friends_going excludes the caller themselves', !aliceSeesGoing.includes('alice'), JSON.stringify(aliceSeesGoing));
+
+// dave, friend of nobody, sees no one going even though bob and alice are.
+await as(idOf.dave);
+check('a friendless user sees no friends going',
+  (await db.query(`SELECT * FROM friends_going(1)`)).rows.length === 0);
+
+// Anonymous (no test.uid) leaks nothing.
+await db.exec(`SELECT set_config('test.uid', '', false)`);
+check('anon caller sees no friends going',
+  (await db.query(`SELECT * FROM friends_going(1)`)).rows.length === 0);
+
 console.log(`\n${failures === 0 ? 'ALL PASSED' : failures + ' FAILURE(S)'}`);
 await db.close();
 process.exit(failures ? 1 : 0);

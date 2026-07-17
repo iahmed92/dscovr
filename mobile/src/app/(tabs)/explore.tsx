@@ -84,6 +84,22 @@ export default function AccountScreen() {
                 </ThemedText>
               </TouchableOpacity>
 
+              <TouchableOpacity
+                onPress={() => router.push('/friends')}
+                accessibilityRole="button"
+                accessibilityLabel="Friends"
+                style={[styles.forYou, { backgroundColor: theme.backgroundElement }]}>
+                <View style={styles.forYouText}>
+                  <ThemedText type="default">Friends</ThemedText>
+                  <ThemedText type="small" themeColor="textSecondary">
+                    See who’s going out
+                  </ThemedText>
+                </View>
+                <ThemedText type="default" themeColor="textSecondary">
+                  ›
+                </ThemedText>
+              </TouchableOpacity>
+
               <SpotifyConnectCard />
 
               {loading && upcoming.length === 0 && past.length === 0 ? (
