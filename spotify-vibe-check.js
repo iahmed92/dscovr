@@ -1,6 +1,7 @@
 // "Vibe Check" ID resolver: scans the artists table for rows missing a
-// stable streaming-service ID, and backfills spotify_id / genre_tags
-// (Spotify) and deezer_id (Deezer).
+// stable streaming-service ID, and backfills spotify_id / spotify_url /
+// genre_tags (Spotify), deezer_id (Deezer), and soundcloud_url (always, a
+// search-results link — there's no API-verified SoundCloud ID to key off).
 //
 // This script does NOT fetch or store preview URLs. Both Spotify's
 // preview_url (killed for API apps in Nov 2024) and Deezer's preview MP3s
@@ -127,12 +128,17 @@ async function updateArtist(id, fields) {
 // Main sync
 // ---------------------------------------------------------------------------
 
+function soundcloudSearchUrl(name) {
+  return `https://soundcloud.com/search/people?q=${encodeURIComponent(name)}`;
+}
+
 async function processArtist(artist, token) {
-  const fields = {};
+  const fields = { soundcloud_url: soundcloudSearchUrl(artist.name) };
 
   const spotifyMatch = await findSpotifyArtist(artist.name, token);
   if (spotifyMatch) {
     fields.spotify_id = spotifyMatch.id;
+    fields.spotify_url = `https://open.spotify.com/artist/${spotifyMatch.id}`;
     if (spotifyMatch.genres?.length) fields.genre_tags = spotifyMatch.genres.slice(0, 10);
   } else {
     console.warn(`No Spotify match for "${artist.name}"`);

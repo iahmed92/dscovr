@@ -26,3 +26,6 @@ $RECYCLE.BIN/
 
 # Supabase CLI local state
 supabase/.temp/
+
+# Claude Code local runtime state
+.claude/

@@ -5,14 +5,14 @@
 // scales to new markets just by adding rows to the table, no code changes
 // required.
 //
-// ACCURACY CAVEAT: markets are filtered by Ticketmaster `stateCode`, because
-// that's the only geographic signal `markets.state` gives us. That's exact
-// for a state with one dominant metro (AZ -> Phoenix/Tucson), but WRONG for
-// multi-metro states: a market row like `{ slug: 'los-angeles', state: 'CA' }`
-// would also pull in San Francisco, San Diego, and Sacramento events and
-// mislabel them as LA. Don't add a market for a multi-metro state without
-// first giving `markets` a city/DMA-level filter and using Ticketmaster's
-// `city` or `dmaId` param instead of `stateCode` for that row.
+// MULTI-METRO STATES: markets are always fetched by Ticketmaster `stateCode`
+// first, then optionally narrowed by `markets.cities` (a text array) to only
+// the venue cities that actually belong to that market — e.g. an LA market
+// row would set cities to ['Los Angeles', 'Hollywood', 'Anaheim', ...] so a
+// CA-wide stateCode fetch doesn't also attribute San Francisco/San Diego/
+// Sacramento events to LA. Single-metro markets (phoenix-tucson, denver,
+// las-vegas) leave `cities` NULL and are unaffected — the filter is a no-op
+// when unset.
 
 import 'dotenv/config';
 import { createClient } from '@supabase/supabase-js';
@@ -110,7 +110,7 @@ async function fetchAllEvents(stateCode) {
 async function getActiveMarkets() {
   const { data, error } = await supabase
     .from('markets')
-    .select('id, slug, name, state')
+    .select('id, slug, name, state, cities')
     .eq('is_active', true);
 
   if (error) throw new Error(`Failed to load markets: ${error.message}`);
@@ -118,6 +118,17 @@ async function getActiveMarkets() {
     throw new Error('No active markets found in Supabase — seed at least one before running the sync.');
   }
   return data;
+}
+
+// No-op when `cities` is unset — only multi-metro markets need to set it.
+function matchesMarketCities(tmEvent, cities) {
+  if (!cities || cities.length === 0) return true;
+
+  const eventCity = tmEvent._embedded?.venues?.[0]?.city?.name;
+  if (!eventCity) return false;
+
+  const normalized = cities.map((c) => c.trim().toLowerCase());
+  return normalized.includes(eventCity.trim().toLowerCase());
 }
 
 // venues.name is UNIQUE, so a real upsert works here.
@@ -168,14 +179,21 @@ async function getOrCreatePromoter(name) {
   return created.id;
 }
 
-// artists.name is UNIQUE. Only `name` is sent so existing spotify_id /
-// deezer_id / genre_tags from the Vibe Check script are never clobbered.
+// No API-verified SoundCloud ID exists, so this is always a search-results
+// link rather than a guaranteed direct profile match.
+function soundcloudSearchUrl(name) {
+  return `https://soundcloud.com/search/people?q=${encodeURIComponent(name)}`;
+}
+
+// artists.name is UNIQUE. Only `name` and the deterministic soundcloud_url
+// are sent so existing spotify_id / spotify_url / deezer_id / genre_tags
+// from the Vibe Check script are never clobbered.
 async function upsertArtist(name) {
   if (!name) return null;
 
   const { data, error } = await supabase
     .from('artists')
-    .upsert({ name }, { onConflict: 'name' })
+    .upsert({ name, soundcloud_url: soundcloudSearchUrl(name) }, { onConflict: 'name' })
     .select('id')
     .single();
 
@@ -260,8 +278,16 @@ async function syncEvent(tmEvent, marketId) {
 async function syncMarket(market) {
   console.log(`\nMarket "${market.name}" (${market.slug}, ${market.state})...`);
 
-  const tmEvents = await fetchAllEvents(market.state);
-  console.log(`  Fetched ${tmEvents.length} events from Ticketmaster.`);
+  const allEvents = await fetchAllEvents(market.state);
+  const tmEvents = allEvents.filter((e) => matchesMarketCities(e, market.cities));
+
+  if (market.cities?.length) {
+    console.log(
+      `  Fetched ${allEvents.length} events, ${tmEvents.length} match cities [${market.cities.join(', ')}].`
+    );
+  } else {
+    console.log(`  Fetched ${tmEvents.length} events from Ticketmaster.`);
+  }
 
   for (const tmEvent of tmEvents) {
     try {

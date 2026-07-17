@@ -171,12 +171,18 @@ async function upsertVenue(location, marketId) {
   return data.id;
 }
 
+// No API-verified SoundCloud ID exists, so this is always a search-results
+// link rather than a guaranteed direct profile match.
+function soundcloudSearchUrl(name) {
+  return `https://soundcloud.com/search/people?q=${encodeURIComponent(name)}`;
+}
+
 async function upsertArtist(name) {
   if (!name) return null;
 
   const { data, error } = await supabase
     .from('artists')
-    .upsert({ name }, { onConflict: 'name' })
+    .upsert({ name, soundcloud_url: soundcloudSearchUrl(name) }, { onConflict: 'name' })
     .select('id')
     .single();
 
