@@ -11,6 +11,7 @@
 // (supabase/functions/vibecheck) at request time.
 
 import 'dotenv/config';
+import { pathToFileURL } from 'node:url';
 import { createClient } from '@supabase/supabase-js';
 
 const { SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY, SPOTIFY_CLIENT_ID, SPOTIFY_CLIENT_SECRET } =
@@ -28,6 +29,35 @@ const supabase = createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY);
 const REQUEST_DELAY_MS = 150;
 
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+
+// ---------------------------------------------------------------------------
+// Name matching
+// ---------------------------------------------------------------------------
+
+// Booking names carry decoration the streaming services don't: "(UK)" region
+// tags, "DJ Set" / "B2B" billing, a leading "The". Strip that before comparing
+// so "Tycho DJ Set" still resolves to Tycho.
+export function normalizeArtistName(name) {
+  return name
+    .normalize('NFKD')
+    .replace(/\p{M}/gu, '')
+    .toLowerCase()
+    .replace(/\(.*?\)|\[.*?\]/g, ' ')
+    .replace(/\b(dj set|live set|b2b)\b/g, ' ')
+    .replace(/&/g, ' and ')
+    .replace(/^\s*the\s+/, '')
+    .replace(/[^a-z0-9]/g, '');
+}
+
+// Both search endpoints rank *something* first for any query, so trusting the
+// top hit silently links unknown local DJs to whoever is popular — "Donk" to
+// Beyoncé, the venue "Hamburger Mary's" to a baroque ensemble. A wrong id is
+// worse than none: the vibecheck function plays that artist's audio. So only
+// a normalized name match counts, and no match resolves to null.
+function pickMatch(candidates, name, readName) {
+  const target = normalizeArtistName(name);
+  return candidates.find((c) => normalizeArtistName(readName(c)) === target) ?? null;
+}
 
 // ---------------------------------------------------------------------------
 // Spotify auth + fetch
@@ -80,10 +110,7 @@ async function findSpotifyArtist(name, token) {
 
   const data = await spotifyFetch(url, token);
   const candidates = data.artists?.items ?? [];
-  if (candidates.length === 0) return null;
-
-  const exactMatch = candidates.find((artist) => artist.name.toLowerCase() === name.toLowerCase());
-  return exactMatch ?? candidates[0];
+  return pickMatch(candidates, name, (artist) => artist.name);
 }
 
 // ---------------------------------------------------------------------------
@@ -99,10 +126,7 @@ async function findDeezerArtistId(name) {
   const data = await res.json();
 
   const candidates = data.data ?? [];
-  if (candidates.length === 0) return null;
-
-  const exactMatch = candidates.find((a) => a.name.toLowerCase() === name.toLowerCase());
-  return (exactMatch ?? candidates[0]).id;
+  return pickMatch(candidates, name, (a) => a.name)?.id ?? null;
 }
 
 // ---------------------------------------------------------------------------
@@ -183,7 +207,11 @@ async function main() {
   console.log('Vibe Check ID resolver complete.');
 }
 
-main().catch((err) => {
-  console.error('Fatal error:', err);
-  process.exit(1);
-});
+// Guarded so the matching helpers above can be imported (by tests, or the
+// link auditor) without kicking off a full sync as a side effect.
+if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
+  main().catch((err) => {
+    console.error('Fatal error:', err);
+    process.exit(1);
+  });
+}
