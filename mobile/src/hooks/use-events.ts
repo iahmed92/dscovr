@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
 
 import { supabase } from '@/lib/supabase';
-import { EventWithDetails, FilteredEventRow, Timeframe, Vibe } from '@/lib/types';
+import { EventWithDetails, FilteredEventRow, Timeframe, Genre } from '@/lib/types';
 
 // The feed reads through get_filtered_events rather than selecting events
 // directly: timeframe and vibe filtering happen in Postgres, so a filter change
@@ -48,7 +48,12 @@ function toEventWithDetails(row: FilteredEventRow): EventWithDetails {
   };
 }
 
-export function useEvents(marketSlug: string | null, timeframe: Timeframe, vibe: Vibe | null) {
+export function useEvents(
+  marketSlug: string | null,
+  timeframe: Timeframe,
+  // 'other' is the ungenred catch-all handled by get_filtered_events (0011).
+  vibe: Genre | 'other' | null
+) {
   const [events, setEvents] = useState<EventWithDetails[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);

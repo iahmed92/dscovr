@@ -38,7 +38,7 @@ export type EventWithDetails = {
   lineups: LineupSlot[];
   // Only the feed carries these — they come from get_filtered_events, not from
   // the plain event select the detail screen uses.
-  vibes?: Vibe[];
+  vibes?: Genre[];
 };
 
 // Mirrors timeframe_window() in supabase/migrations/0008. The database raises
@@ -54,17 +54,18 @@ export const TIMEFRAME_LABELS: Record<Timeframe, string> = {
   next_month: 'Next month',
 };
 
-// Mirrors the vibe column of vibe_taxonomy.
-export const VIBES = [
+// Mirrors the vibe column of vibe_taxonomy. Named "genre" on the client —
+// the database keeps vibe_* naming to avoid another migration.
+export const GENRES = [
   'house_techno',
   'bass_dubstep',
   'trance_progressive',
   'mainstage_edm',
   'underground_experimental',
 ] as const;
-export type Vibe = (typeof VIBES)[number];
+export type Genre = (typeof GENRES)[number];
 
-export const VIBE_LABELS: Record<Vibe, string> = {
+export const GENRE_LABELS: Record<Genre, string> = {
   house_techno: 'House / Techno',
   bass_dubstep: 'Bass / Dubstep',
   trance_progressive: 'Trance / Prog',
@@ -84,6 +85,6 @@ export type FilteredEventRow = {
   source_type: string;
   venue_name: string | null;
   venue_city: string | null;
-  vibes: Vibe[] | null;
+  vibes: Genre[] | null;
   artists: (Artist & { performance_order: number | null })[] | null;
 };

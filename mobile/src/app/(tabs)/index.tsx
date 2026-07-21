@@ -13,27 +13,30 @@ import {
   TIMEFRAMES,
   TIMEFRAME_LABELS,
   Timeframe,
-  VIBES,
-  VIBE_LABELS,
-  Vibe,
+  GENRES,
+  GENRE_LABELS,
+  Genre,
 } from '@/lib/types';
 
 const DEFAULT_MARKET_SLUG = 'phoenix-tucson';
 
 const TIMEFRAME_OPTIONS = TIMEFRAMES.map((value) => ({ value, label: TIMEFRAME_LABELS[value] }));
 // 'all' is a first-class option rather than a deselect: roughly half of events
-// carry no vibe at all (genre_tags only exist where Spotify matched), so a vibe
-// filter always hides a large chunk of the feed and needs an obvious way out.
-const VIBE_OPTIONS: { value: Vibe | 'all'; label: string }[] = [
-  { value: 'all', label: 'All vibes' },
-  ...VIBES.map((value) => ({ value: value as Vibe | 'all', label: VIBE_LABELS[value] })),
+// carry no genre at all (genre_tags only exist where Spotify matched), so a
+// genre filter always hides a large chunk of the feed and needs an obvious way out.
+// 'other' is the catch-all for events whose artists produced no genre tags
+// (about half of them) — without it, picking any genre silently hides them.
+const GENRE_OPTIONS: { value: Genre | 'all' | 'other'; label: string }[] = [
+  { value: 'all', label: 'All genres' },
+  ...GENRES.map((value) => ({ value: value as Genre | 'all' | 'other', label: GENRE_LABELS[value] })),
+  { value: 'other', label: 'Other' },
 ];
 
 export default function HomeScreen() {
   const { markets, loading: marketsLoading, error: marketsError } = useMarkets();
   const [selectedMarketId, setSelectedMarketId] = useState<number | null>(null);
   const [timeframe, setTimeframe] = useState<Timeframe>('all');
-  const [vibe, setVibe] = useState<Vibe | 'all'>('all');
+  const [genre, setGenre] = useState<Genre | 'all' | 'other'>('all');
 
   useEffect(() => {
     if (selectedMarketId !== null || markets.length === 0) return;
@@ -47,7 +50,7 @@ export default function HomeScreen() {
   const { events, loading: eventsLoading, error: eventsError } = useEvents(
     marketSlug,
     timeframe,
-    vibe === 'all' ? null : vibe
+    genre === 'all' ? null : genre
   );
 
   const loading = marketsLoading || (eventsLoading && events.length === 0);
@@ -87,10 +90,10 @@ export default function HomeScreen() {
               accessibilityLabel="Filter by date"
             />
             <Dropdown
-              options={VIBE_OPTIONS}
-              value={vibe}
-              onChange={setVibe}
-              accessibilityLabel="Filter by vibe"
+              options={GENRE_OPTIONS}
+              value={genre}
+              onChange={setGenre}
+              accessibilityLabel="Filter by genre"
             />
           </View>
         </ThemedView>
@@ -110,13 +113,13 @@ export default function HomeScreen() {
         {!error && !loading && events.length === 0 && (
           <ThemedView style={styles.centered}>
             <ThemedText themeColor="textSecondary" style={styles.emptyText}>
-              {timeframe === 'all' && vibe === 'all'
+              {timeframe === 'all' && genre === 'all'
                 ? 'No upcoming events in this market yet.'
                 : 'No events match these filters.'}
             </ThemedText>
-            {vibe !== 'all' && (
+            {genre !== 'all' && (
               <ThemedText type="small" themeColor="textSecondary" style={styles.emptyText}>
-                Only artists we matched on Spotify carry a vibe, so some shows won&apos;t appear
+                Only artists we matched on Spotify carry a genre, so some shows won&apos;t appear
                 under one.
               </ThemedText>
             )}

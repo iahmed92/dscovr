@@ -2,6 +2,7 @@ import { Image } from 'expo-image';
 import { Link } from 'expo-router';
 import { StyleSheet, TouchableOpacity, View } from 'react-native';
 
+import { ArtistLineup } from '@/components/artist-lineup';
 import { ThemedText } from '@/components/themed-text';
 import { Spacing } from '@/constants/theme';
 import { useTheme } from '@/hooks/use-theme';
@@ -48,11 +49,9 @@ export function EventCard({ event }: { event: EventWithDetails }) {
             </ThemedText>
           ) : null}
 
-          {artists.length > 0 && (
-            <ThemedText style={[styles.lineup, { color: theme.textSecondary }]} numberOfLines={1}>
-              {artists.map((a) => a.name).join(' · ')}
-            </ThemedText>
-          )}
+          {/* Compact lineup: one-tap previews without the icon column. Capped so
+              a 30-artist festival doesn't turn its card into a wall. */}
+          {artists.length > 0 && <ArtistLineup artists={artists} compact max={4} />}
         </View>
 
         {event.flyer_url ? (
@@ -97,13 +96,6 @@ const styles = StyleSheet.create({
     fontSize: 13,
     lineHeight: 18,
     fontWeight: '400',
-  },
-  lineup: {
-    fontSize: 12,
-    lineHeight: 17,
-    fontWeight: '400',
-    marginTop: 1,
-    opacity: 0.8,
   },
   thumb: {
     width: 68,

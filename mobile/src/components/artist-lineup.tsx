@@ -57,14 +57,49 @@ function VibeCheckButton({ artistId }: { artistId: number }) {
 // vertical stack. Each cell is the name with its streaming indicators tucked
 // underneath at 14px, so the icons read as quiet metadata instead of a column
 // of buttons fighting the names for attention.
-export function ArtistLineup({ artists }: { artists: Artist[] }) {
+// `compact` is the feed variant: play button beside the name, inline and
+// wrapping, with the profile links left to the detail screen. Keeps one-tap
+// previews while browsing without rebuilding the heavy icon column that made
+// every card a wall of buttons.
+export function ArtistLineup({
+  artists,
+  compact = false,
+  max,
+}: {
+  artists: Artist[];
+  compact?: boolean;
+  max?: number;
+}) {
   const theme = useTheme();
 
   if (artists.length === 0) return null;
 
+  const shown = max ? artists.slice(0, max) : artists;
+  const hidden = artists.length - shown.length;
+
+  if (compact) {
+    return (
+      <View style={styles.compactRow}>
+        {shown.map((artist) => (
+          <View key={artist.id} style={styles.compactItem}>
+            <VibeCheckButton artistId={artist.id} />
+            <ThemedText style={[styles.compactName, { color: theme.textSecondary }]} numberOfLines={1}>
+              {artist.name}
+            </ThemedText>
+          </View>
+        ))}
+        {hidden > 0 && (
+          <ThemedText style={[styles.compactName, { color: theme.textSecondary }]}>
+            +{hidden}
+          </ThemedText>
+        )}
+      </View>
+    );
+  }
+
   return (
     <View style={styles.grid}>
-      {artists.map((artist) => (
+      {shown.map((artist) => (
         <View key={artist.id} style={styles.cell}>
           <ThemedText type="small" numberOfLines={1}>
             {artist.name}
@@ -85,6 +120,25 @@ export function ArtistLineup({ artists }: { artists: Artist[] }) {
 }
 
 const styles = StyleSheet.create({
+  compactRow: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    alignItems: 'center',
+    rowGap: Spacing.one,
+    columnGap: Spacing.two + 2,
+    marginTop: 2,
+  },
+  compactItem: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: Spacing.one + 1,
+    maxWidth: '100%',
+  },
+  compactName: {
+    fontSize: 12,
+    lineHeight: 17,
+    flexShrink: 1,
+  },
   grid: {
     flexDirection: 'row',
     flexWrap: 'wrap',

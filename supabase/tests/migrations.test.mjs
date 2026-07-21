@@ -304,6 +304,16 @@ check("vibe 'house_techno' isolates the techno show", houseFeed.includes('Tonigh
 const noneFeed = await feed('all', 'mainstage_edm');
 check("vibe with no matches returns empty", noneFeed.length === 0, JSON.stringify(noneFeed));
 
+// 0011: events whose artists produced no genre tags are invisible to every
+// named filter, so 'other' gives them a home instead of vanishing.
+const otherFeed = await feed('all', 'other');
+check("'other' returns the ungenred shows", otherFeed.includes('Test Show'), JSON.stringify(otherFeed));
+check("'other' excludes shows that DO have a genre", !otherFeed.includes('Tonight Techno'), JSON.stringify(otherFeed));
+const allFeed2 = await feed('all', null);
+check("every show is reachable via all = genred + other",
+  allFeed2.length === otherFeed.length + allFeed2.filter((t) => !otherFeed.includes(t)).length,
+  `all=${allFeed2.length} other=${otherFeed.length}`);
+
 console.log('\n--- timeframe_window: this_weekend across every weekday ---');
 // Fixed, known dates rather than offsets from "today", and asserted against the
 // SQL's real output — an earlier version of this test recomputed the window in
