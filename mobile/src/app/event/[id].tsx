@@ -7,6 +7,7 @@ import { ArtistLineup } from '@/components/artist-lineup';
 import { AttendanceButton } from '@/components/attendance-button';
 import { FriendsGoing } from '@/components/friends-going';
 import { InviteCrewButton } from '@/components/invite-crew-button';
+import { InviterBanner } from '@/components/inviter-banner';
 import { ThemedText } from '@/components/themed-text';
 import { ThemedView } from '@/components/themed-view';
 import { MaxContentWidth, Spacing } from '@/constants/theme';
@@ -18,7 +19,7 @@ import { mapsUrl } from '@/lib/maps';
 import { logTicketClick, taggedTicketUrl } from '@/lib/track';
 
 export default function EventDetailScreen() {
-  const { id } = useLocalSearchParams<{ id: string }>();
+  const { id, invited_by: invitedBy } = useLocalSearchParams<{ id: string; invited_by?: string }>();
   const theme = useTheme();
 
   // Number('abc') is NaN, which is truthy enough to reach the query and comes
@@ -121,6 +122,10 @@ export default function EventDetailScreen() {
             )}
 
             <View style={styles.actions}>
+              {/* Arrived from a friend's share link — offer the connection
+                  before anything else on the screen. */}
+              {invitedBy ? <InviterBanner inviterId={String(invitedBy)} /> : null}
+
               <AttendanceButton eventId={event.id} />
               <FriendsGoing eventId={event.id} />
               <InviteCrewButton eventId={event.id} title={event.title} />
