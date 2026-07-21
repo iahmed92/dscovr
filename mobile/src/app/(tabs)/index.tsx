@@ -9,6 +9,7 @@ import { ThemedView } from '@/components/themed-view';
 import { BottomTabInset, MaxContentWidth, Spacing } from '@/constants/theme';
 import { useEvents } from '@/hooks/use-events';
 import { useMarkets } from '@/hooks/use-markets';
+import { stateName } from '@/lib/states';
 import {
   TIMEFRAMES,
   TIMEFRAME_LABELS,
@@ -61,8 +62,14 @@ export default function HomeScreen() {
   // Day headers + rail metadata, recomputed only when the feed changes.
   const timeline = useMemo(() => buildTimeline(events), [events]);
 
+  // Grouped by state so the picker reads state -> city. Sorted by state name
+  // then city, because Dropdown only starts a new header when the group
+  // changes between consecutive options.
   const marketOptions = useMemo(
-    () => markets.map((m) => ({ value: m.id, label: m.name })),
+    () =>
+      markets
+        .map((m) => ({ value: m.id, label: m.name, group: stateName(m.state) }))
+        .sort((a, b) => a.group.localeCompare(b.group) || a.label.localeCompare(b.label)),
     [markets]
   );
 

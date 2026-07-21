@@ -5,7 +5,10 @@ import { ThemedText } from '@/components/themed-text';
 import { MaxContentWidth, Spacing } from '@/constants/theme';
 import { useTheme } from '@/hooks/use-theme';
 
-export type DropdownOption<T> = { value: T; label: string };
+// `group` renders a sticky-ish section label above the option (states, for
+// the market picker). Options carrying the same consecutive group share one
+// header, so callers just sort by group before passing them in.
+export type DropdownOption<T> = { value: T; label: string; group?: string };
 
 type Props<T> = {
   options: DropdownOption<T>[];
@@ -52,11 +55,17 @@ export function Dropdown<T extends string | number>({
             style={[styles.panel, { backgroundColor: theme.backgroundElement, borderColor: theme.border }]}
             onPress={(e) => e.stopPropagation()}>
             <ScrollView showsVerticalScrollIndicator={false} bounces={false}>
-              {options.map((option) => {
+              {options.map((option, i) => {
                 const isSelected = option.value === value;
+                const showGroup = !!option.group && option.group !== options[i - 1]?.group;
                 return (
+                  <View key={String(option.value)}>
+                    {showGroup && (
+                      <ThemedText style={[styles.groupLabel, { color: theme.textSecondary }]}>
+                        {option.group}
+                      </ThemedText>
+                    )}
                   <TouchableOpacity
-                    key={String(option.value)}
                     onPress={() => {
                       onChange(option.value);
                       setOpen(false);
@@ -73,6 +82,7 @@ export function Dropdown<T extends string | number>({
                     </ThemedText>
                     {isSelected && <ThemedText style={styles.check}>✓</ThemedText>}
                   </TouchableOpacity>
+                  </View>
                 );
               })}
             </ScrollView>
@@ -133,5 +143,14 @@ const styles = StyleSheet.create({
   },
   check: {
     fontSize: 13,
+  },
+  groupLabel: {
+    fontSize: 11,
+    lineHeight: 15,
+    fontWeight: '700',
+    letterSpacing: 0.5,
+    paddingHorizontal: Spacing.three - 2,
+    paddingTop: Spacing.two + 2,
+    paddingBottom: Spacing.one,
   },
 });

@@ -11,6 +11,7 @@ import { MaxContentWidth, Spacing } from '@/constants/theme';
 import { useAuth } from '@/hooks/use-auth';
 import { useMarkets } from '@/hooks/use-markets';
 import { useRecommendations } from '@/hooks/use-recommendations';
+import { stateName } from '@/lib/states';
 import { useTheme } from '@/hooks/use-theme';
 
 const DEFAULT_MARKET_SLUG = 'phoenix-tucson';
@@ -42,7 +43,9 @@ export default function ForYouScreen() {
           </ThemedText>
           <View style={styles.filters}>
             <Dropdown
-              options={markets.map((m) => ({ value: m.id, label: m.name }))}
+              options={markets
+                .map((m) => ({ value: m.id, label: m.name, group: stateName(m.state) }))
+                .sort((a, b) => a.group.localeCompare(b.group) || a.label.localeCompare(b.label))}
               value={marketId}
               onChange={setMarketId}
               placeholder="City"
