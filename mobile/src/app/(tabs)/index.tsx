@@ -1,10 +1,9 @@
 import { useEffect, useMemo, useState } from 'react';
-import { ActivityIndicator, FlatList, Platform, StyleSheet } from 'react-native';
+import { ActivityIndicator, FlatList, Platform, StyleSheet, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
+import { Dropdown } from '@/components/dropdown';
 import { DateHeader, TimelineRow, buildTimeline } from '@/components/event-timeline';
-import { FilterChips } from '@/components/filter-chips';
-import { MarketPicker } from '@/components/market-picker';
 import { ThemedText } from '@/components/themed-text';
 import { ThemedView } from '@/components/themed-view';
 import { BottomTabInset, MaxContentWidth, Spacing } from '@/constants/theme';
@@ -57,6 +56,11 @@ export default function HomeScreen() {
   // Day headers + rail metadata, recomputed only when the feed changes.
   const timeline = useMemo(() => buildTimeline(events), [events]);
 
+  const marketOptions = useMemo(
+    () => markets.map((m) => ({ value: m.id, label: m.name })),
+    [markets]
+  );
+
   return (
     <ThemedView style={styles.container}>
       <SafeAreaView style={styles.safeArea} edges={['top']}>
@@ -66,23 +70,29 @@ export default function HomeScreen() {
               DSCOVR
             </ThemedText>
           )}
-          <MarketPicker
-            markets={markets}
-            selectedId={selectedMarketId}
-            onSelect={setSelectedMarketId}
-          />
-          <FilterChips
-            options={TIMEFRAME_OPTIONS}
-            selected={timeframe}
-            onSelect={setTimeframe}
-            accessibilityLabel="Filter by timeframe"
-          />
-          <FilterChips
-            options={VIBE_OPTIONS}
-            selected={vibe}
-            onSelect={setVibe}
-            accessibilityLabel="Filter by vibe"
-          />
+          {/* Three compact dropdowns on one line, instead of three stacked pill
+              rows that pushed the first event ~150px down the screen. */}
+          <View style={styles.filters}>
+            <Dropdown
+              options={marketOptions}
+              value={selectedMarketId}
+              onChange={setSelectedMarketId}
+              placeholder="City"
+              accessibilityLabel="Filter by city"
+            />
+            <Dropdown
+              options={TIMEFRAME_OPTIONS}
+              value={timeframe}
+              onChange={setTimeframe}
+              accessibilityLabel="Filter by date"
+            />
+            <Dropdown
+              options={VIBE_OPTIONS}
+              value={vibe}
+              onChange={setVibe}
+              accessibilityLabel="Filter by vibe"
+            />
+          </View>
         </ThemedView>
 
         {error && (
@@ -155,6 +165,13 @@ const styles = StyleSheet.create({
   },
   heading: {
     paddingHorizontal: Spacing.three,
+  },
+  filters: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: Spacing.two,
+    paddingHorizontal: Spacing.three,
+    paddingBottom: Spacing.two,
   },
   centered: {
     flex: 1,

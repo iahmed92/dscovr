@@ -3,7 +3,7 @@ import { useEffect, useState } from 'react';
 import { ActivityIndicator, Platform, ScrollView, StyleSheet, TouchableOpacity, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
-import { MarketPicker } from '@/components/market-picker';
+import { Dropdown } from '@/components/dropdown';
 import { RecommendationRow } from '@/components/recommendation-row';
 import { ThemedText } from '@/components/themed-text';
 import { ThemedView } from '@/components/themed-view';
@@ -40,7 +40,15 @@ export default function ForYouScreen() {
           <ThemedText type="subtitle" style={styles.heading}>
             For you
           </ThemedText>
-          <MarketPicker markets={markets} selectedId={marketId} onSelect={setMarketId} />
+          <View style={styles.filters}>
+            <Dropdown
+              options={markets.map((m) => ({ value: m.id, label: m.name }))}
+              value={marketId}
+              onChange={setMarketId}
+              placeholder="City"
+              accessibilityLabel="Filter by city"
+            />
+          </View>
         </View>
 
         <ScrollView contentContainerStyle={styles.list} showsVerticalScrollIndicator={false}>
@@ -99,6 +107,11 @@ const styles = StyleSheet.create({
   heading: {
     fontSize: 32,
     lineHeight: 40,
+    paddingHorizontal: Spacing.three,
+  },
+  filters: {
+    flexDirection: 'row',
+    gap: Spacing.two,
     paddingHorizontal: Spacing.three,
   },
   list: {
