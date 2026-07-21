@@ -34,26 +34,39 @@ function IconLink({ url, icon, color }: { url: string; icon: 'spotify' | 'soundc
 // "<artist> live set" — labelled as a search, so it stops promising a profile
 // and delivering a results page.
 function LiveSetLink({ artist }: { artist: Artist }) {
-  const hasSet = !!artist.mixcloud_url;
-
-  const url = hasSet
-    ? artist.mixcloud_url!
-    : `https://www.youtube.com/results?search_query=${encodeURIComponent(`${artist.name} live set`)}`;
+  // YouTube leads: it's where the overwhelming majority of live sets are
+  // (festival streams, Boiler Room, EDC uploads), and it covers every artist.
+  // Mixcloud only appears as a second icon when the enrichment resolved the
+  // artist's own account — a direct set is worth keeping alongside a search.
+  const youtubeUrl = `https://www.youtube.com/results?search_query=${encodeURIComponent(
+    `${artist.name} live set`
+  )}`;
 
   return (
-    <TouchableOpacity
-      onPress={() => Linking.openURL(url)}
-      hitSlop={10}
-      accessibilityRole="link"
-      accessibilityLabel={hasSet ? `Latest set by ${artist.name}` : `Search live sets for ${artist.name}`}>
-      <FontAwesome5
-        name={hasSet ? 'mixcloud' : 'youtube'}
-        size={ICON}
-        color={hasSet ? MIXCLOUD_BLUE : YOUTUBE_RED}
-        // A search is a weaker promise than a real set, so it reads quieter.
-        style={hasSet ? undefined : styles.searchIcon}
-      />
-    </TouchableOpacity>
+    <>
+      <TouchableOpacity
+        onPress={() => Linking.openURL(youtubeUrl)}
+        hitSlop={10}
+        accessibilityRole="link"
+        accessibilityLabel={`Live sets for ${artist.name} on YouTube`}>
+        <FontAwesome5 name="youtube" size={ICON} color={YOUTUBE_RED} />
+      </TouchableOpacity>
+
+      {artist.mixcloud_url && (
+        <TouchableOpacity
+          onPress={() => Linking.openURL(artist.mixcloud_url!)}
+          hitSlop={10}
+          accessibilityRole="link"
+          accessibilityLabel={`Latest Mixcloud set by ${artist.name}`}>
+          <FontAwesome5
+            name="mixcloud"
+            size={ICON}
+            color={MIXCLOUD_BLUE}
+            style={styles.searchIcon}
+          />
+        </TouchableOpacity>
+      )}
+    </>
   );
 }
 
