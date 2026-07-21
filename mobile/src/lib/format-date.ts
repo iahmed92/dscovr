@@ -7,6 +7,26 @@ export function formatEventDate(dateStr: string): string {
   return date.toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' });
 }
 
+// Heading for a day group in the feed timeline: "Today" / "Tomorrow" for the
+// near days, otherwise "Fri, Jul 17". Parsed from parts for the same reason as
+// formatEventDate — event_date is a bare calendar date with no timezone.
+export function formatSectionDate(dateStr: string): string {
+  const today = todayLocalDateString();
+  if (dateStr === today) return 'Today';
+
+  const [ty, tm, td] = today.split('-').map(Number);
+  const tomorrow = new Date(ty, tm - 1, td + 1);
+  const tomorrowStr = `${tomorrow.getFullYear()}-${String(tomorrow.getMonth() + 1).padStart(2, '0')}-${String(tomorrow.getDate()).padStart(2, '0')}`;
+  if (dateStr === tomorrowStr) return 'Tomorrow';
+
+  const [y, m, d] = dateStr.split('-').map(Number);
+  return new Date(y, m - 1, d).toLocaleDateString('en-US', {
+    weekday: 'short',
+    month: 'short',
+    day: 'numeric',
+  });
+}
+
 // Today as a 'YYYY-MM-DD' string in local time, for comparing against
 // event_date (which is a bare calendar date). Built from parts, not
 // toISOString(), which is UTC and would flip the day near midnight — the same

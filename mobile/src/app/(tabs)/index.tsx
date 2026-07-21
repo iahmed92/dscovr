@@ -1,8 +1,8 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { ActivityIndicator, FlatList, Platform, StyleSheet } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
-import { EventCard } from '@/components/event-card';
+import { DateHeader, TimelineRow, buildTimeline } from '@/components/event-timeline';
 import { FilterChips } from '@/components/filter-chips';
 import { MarketPicker } from '@/components/market-picker';
 import { ThemedText } from '@/components/themed-text';
@@ -53,6 +53,9 @@ export default function HomeScreen() {
 
   const loading = marketsLoading || (eventsLoading && events.length === 0);
   const error = marketsError ?? eventsError;
+
+  // Day headers + rail metadata, recomputed only when the feed changes.
+  const timeline = useMemo(() => buildTimeline(events), [events]);
 
   return (
     <ThemedView style={styles.container}>
@@ -112,9 +115,15 @@ export default function HomeScreen() {
 
         {!error && !loading && events.length > 0 && (
           <FlatList
-            data={events}
-            keyExtractor={(event) => String(event.id)}
-            renderItem={({ item }) => <EventCard event={item} />}
+            data={timeline}
+            keyExtractor={(item) => item.key}
+            renderItem={({ item }) =>
+              item.type === 'header' ? (
+                <DateHeader label={item.label} />
+              ) : (
+                <TimelineRow event={item.event} isLastOfDay={item.isLastOfDay} />
+              )
+            }
             contentContainerStyle={styles.list}
             showsVerticalScrollIndicator={false}
           />

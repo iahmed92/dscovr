@@ -1,109 +1,117 @@
 import { Image } from 'expo-image';
 import { Link } from 'expo-router';
-import { Linking, StyleSheet, TouchableOpacity, View } from 'react-native';
+import { StyleSheet, TouchableOpacity, View } from 'react-native';
 
-import { ArtistLineup } from '@/components/artist-lineup';
 import { ThemedText } from '@/components/themed-text';
-import { ThemedView } from '@/components/themed-view';
 import { Spacing } from '@/constants/theme';
 import { useTheme } from '@/hooks/use-theme';
-import { lineupArtists, sourceLabel } from '@/lib/event-display';
-import { formatEventDate } from '@/lib/format-date';
+import { lineupArtists } from '@/lib/event-display';
+import { formatEventTime } from '@/lib/format-date';
 import { EventWithDetails } from '@/lib/types';
 
+// Compact row, Luma-style: the content leads and the artwork is a small square
+// on the right. The previous full-bleed 16:9 hero plus a 32px title made every
+// card a poster — fine for one event, unscannable as a feed.
+//
+// The lineup shows as a single muted line here rather than the interactive grid;
+// Vibe Check playback lives on the detail screen, so the feed stays scannable.
 export function EventCard({ event }: { event: EventWithDetails }) {
   const theme = useTheme();
 
   const artists = lineupArtists(event.lineups);
+  const venue = [event.venues?.name, event.venues?.city].filter(Boolean).join(' · ');
+  const time = event.doors_time ? formatEventTime(event.doors_time) : null;
 
   return (
-    <ThemedView type="backgroundElement" style={[styles.card, { borderColor: theme.border }]}>
-      <Link href={`/event/${event.id}`} asChild>
-        <TouchableOpacity accessibilityRole="button" accessibilityLabel={`View ${event.title}`}>
-          {event.flyer_url ? (
-            <Image source={{ uri: event.flyer_url }} style={styles.flyer} contentFit="cover" />
-          ) : (
-            <View style={[styles.flyer, styles.flyerFallback, { backgroundColor: theme.backgroundSelected }]}>
-              <ThemedText type="title" themeColor="textSecondary">
-                {event.title.charAt(0)}
-              </ThemedText>
-            </View>
+    <Link href={`/event/${event.id}`} asChild>
+      <TouchableOpacity
+        accessibilityRole="button"
+        accessibilityLabel={`View ${event.title}`}
+        // Flattened, not an array: expo-router's <Link asChild> slot rejects
+        // style arrays on its direct child.
+        style={StyleSheet.flatten([
+          styles.card,
+          { backgroundColor: theme.backgroundElement, borderColor: theme.border },
+        ])}>
+        <View style={styles.text}>
+          {time && (
+            <ThemedText style={[styles.time, { color: theme.textSecondary }]}>{time}</ThemedText>
           )}
 
-          <View style={styles.cardTextBlock}>
-            <View style={styles.metaRow}>
-              <ThemedText type="small" themeColor="textSecondary">
-                {formatEventDate(event.event_date)}
-              </ThemedText>
-              <ThemedText type="small" themeColor="textSecondary">
-                {sourceLabel(event.source_type)}
-              </ThemedText>
-            </View>
+          <ThemedText style={styles.title} numberOfLines={2}>
+            {event.title}
+          </ThemedText>
 
-            <ThemedText type="subtitle" style={styles.title} numberOfLines={2}>
-              {event.title}
+          {venue ? (
+            <ThemedText style={[styles.meta, { color: theme.textSecondary }]} numberOfLines={1}>
+              {venue}
             </ThemedText>
+          ) : null}
 
-            {event.venues && (
-              <ThemedText type="default" themeColor="textSecondary">
-                {event.venues.name}
-                {event.venues.city ? ` · ${event.venues.city}` : ''}
-              </ThemedText>
-            )}
-          </View>
-        </TouchableOpacity>
-      </Link>
+          {artists.length > 0 && (
+            <ThemedText style={[styles.lineup, { color: theme.textSecondary }]} numberOfLines={1}>
+              {artists.map((a) => a.name).join(' · ')}
+            </ThemedText>
+          )}
+        </View>
 
-      <View style={styles.body}>
-        {artists.length > 0 && (
-          <View style={styles.lineupSection}>
-            <ArtistLineup artists={artists} />
+        {event.flyer_url ? (
+          <Image source={{ uri: event.flyer_url }} style={styles.thumb} contentFit="cover" />
+        ) : (
+          <View style={[styles.thumb, styles.thumbFallback, { backgroundColor: theme.backgroundSelected }]}>
+            <ThemedText style={[styles.title, { color: theme.textSecondary }]}>
+              {event.title.charAt(0)}
+            </ThemedText>
           </View>
         )}
-
-        {event.ticket_url && (
-          <TouchableOpacity onPress={() => Linking.openURL(event.ticket_url!)}>
-            <ThemedText type="linkPrimary">Tickets ↗</ThemedText>
-          </TouchableOpacity>
-        )}
-      </View>
-    </ThemedView>
+      </TouchableOpacity>
+    </Link>
   );
 }
 
 const styles = StyleSheet.create({
   card: {
-    borderRadius: Spacing.three,
-    overflow: 'hidden',
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    gap: Spacing.three,
+    padding: Spacing.three - 2,
+    borderRadius: 14,
     borderWidth: 1,
   },
-  flyer: {
-    width: '100%',
-    aspectRatio: 16 / 9,
+  text: {
+    flex: 1,
+    gap: 3,
   },
-  flyerFallback: {
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  cardTextBlock: {
-    padding: Spacing.four,
-    paddingBottom: 0,
-    gap: Spacing.two,
-  },
-  body: {
-    paddingHorizontal: Spacing.four,
-    paddingBottom: Spacing.four,
-    gap: Spacing.two,
-  },
-  metaRow: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
+  // Tight ramp: weight and color carry the hierarchy, not size jumps.
+  time: {
+    fontSize: 13,
+    lineHeight: 17,
+    fontWeight: '500',
   },
   title: {
-    marginBottom: Spacing.one,
+    fontSize: 16,
+    lineHeight: 21,
+    fontWeight: '600',
   },
-  lineupSection: {
-    marginTop: Spacing.two,
-    marginBottom: Spacing.one,
+  meta: {
+    fontSize: 13,
+    lineHeight: 18,
+    fontWeight: '400',
+  },
+  lineup: {
+    fontSize: 12,
+    lineHeight: 17,
+    fontWeight: '400',
+    marginTop: 1,
+    opacity: 0.8,
+  },
+  thumb: {
+    width: 68,
+    height: 68,
+    borderRadius: 10,
+  },
+  thumbFallback: {
+    alignItems: 'center',
+    justifyContent: 'center',
   },
 });
