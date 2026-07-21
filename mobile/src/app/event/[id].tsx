@@ -53,47 +53,67 @@ export default function EventDetailScreen() {
     <ThemedView style={styles.screen}>
       <SafeAreaView style={styles.safeArea} edges={['bottom']}>
         <ScrollView contentContainerStyle={styles.content} showsVerticalScrollIndicator={false}>
-          {event.flyer_url ? (
-            <Image source={{ uri: event.flyer_url }} style={styles.flyer} contentFit="cover" />
-          ) : (
-            <View style={[styles.flyer, styles.flyerFallback, { backgroundColor: theme.backgroundSelected }]}>
-              <ThemedText type="title" themeColor="textSecondary">
-                {event.title.charAt(0)}
-              </ThemedText>
-            </View>
-          )}
+          {/* Inset and rounded rather than a full-bleed square — the same card
+              language as the feed, so the two screens read as one app. */}
+          <View style={styles.flyerWrap}>
+            {event.flyer_url ? (
+              <Image
+                source={{ uri: event.flyer_url }}
+                style={[styles.flyer, { borderColor: theme.border }]}
+                contentFit="cover"
+              />
+            ) : (
+              <View
+                style={[
+                  styles.flyer,
+                  styles.flyerFallback,
+                  { backgroundColor: theme.backgroundElement, borderColor: theme.border },
+                ]}>
+                <ThemedText style={styles.title} themeColor="textSecondary">
+                  {event.title.charAt(0)}
+                </ThemedText>
+              </View>
+            )}
+          </View>
 
           <View style={styles.body}>
             <View style={styles.metaRow}>
-              <ThemedText type="small" themeColor="textSecondary">
+              <ThemedText style={[styles.meta, { color: theme.textSecondary }]}>
                 {formatEventDate(event.event_date)}
                 {event.doors_time ? ` · ${formatEventTime(event.doors_time)}` : ''}
               </ThemedText>
-              <ThemedText type="small" themeColor="textSecondary">
+              <ThemedText style={[styles.meta, { color: theme.textSecondary }]}>
                 {sourceLabel(event.source_type)}
               </ThemedText>
             </View>
 
-            <ThemedText type="title" style={styles.title}>
-              {event.title}
-            </ThemedText>
+            <ThemedText style={styles.title}>{event.title}</ThemedText>
+
+            {event.is_festival && (
+              <View style={[styles.badge, { borderColor: theme.border }]}>
+                <ThemedText style={[styles.badgeText, { color: theme.textSecondary }]}>
+                  FESTIVAL
+                </ThemedText>
+              </View>
+            )}
 
             {event.venues && (
               <TouchableOpacity
                 disabled={!venueMapsUrl}
                 onPress={() => venueMapsUrl && Linking.openURL(venueMapsUrl)}
-                style={styles.venueBlock}>
-                <ThemedText type="default">{event.venues.name}</ThemedText>
+                style={[
+                  styles.venueBlock,
+                  { backgroundColor: theme.backgroundElement, borderColor: theme.border },
+                ]}>
+                <ThemedText style={styles.venueName}>{event.venues.name}</ThemedText>
                 {event.venues.address && (
-                  <ThemedText type="small" themeColor="textSecondary">
+                  <ThemedText style={[styles.meta, { color: theme.textSecondary }]}>
                     {event.venues.address}
                     {event.venues.city ? `, ${event.venues.city}` : ''}
                   </ThemedText>
                 )}
                 {venueMapsUrl && (
-                  <ThemedText type="linkPrimary" style={styles.mapsLink}>
-                    Open in Maps ↗
-                  </ThemedText>
+                  <ThemedText style={styles.mapsLink}>Open in Maps ↗</ThemedText>
                 )}
               </TouchableOpacity>
             )}
@@ -115,9 +135,7 @@ export default function EventDetailScreen() {
 
             {artists.length > 0 && (
               <View style={styles.lineupSection}>
-                <ThemedText type="subtitle" style={styles.lineupHeading}>
-                  Lineup
-                </ThemedText>
+                <ThemedText style={styles.sectionHeading}>Lineup</ThemedText>
                 <ArtistLineup artists={artists} />
               </View>
             )}
@@ -147,9 +165,17 @@ const styles = StyleSheet.create({
   content: {
     paddingBottom: Spacing.six,
   },
+  flyerWrap: {
+    paddingHorizontal: Spacing.three,
+    paddingTop: Spacing.three,
+  },
+  // 16:9 rather than a full-bleed square: the poster shouldn't own the whole
+  // first screen before the title and time.
   flyer: {
     width: '100%',
-    aspectRatio: 1,
+    aspectRatio: 16 / 9,
+    borderRadius: 14,
+    borderWidth: 1,
   },
   flyerFallback: {
     alignItems: 'center',
@@ -163,15 +189,49 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     justifyContent: 'space-between',
   },
+  // Same narrow ramp as the feed — 24px here rather than 16 because the title
+  // is the page, but nowhere near the old 28px on the loose starter scale.
   title: {
-    fontSize: 28,
-    lineHeight: 32,
+    fontSize: 24,
+    lineHeight: 29,
+    fontWeight: '600',
+  },
+  meta: {
+    fontSize: 13,
+    lineHeight: 18,
+    fontWeight: '400',
+  },
+  badge: {
+    alignSelf: 'flex-start',
+    paddingHorizontal: Spacing.two,
+    paddingVertical: 3,
+    borderRadius: 999,
+    borderWidth: 1,
+  },
+  badgeText: {
+    fontSize: 10,
+    lineHeight: 14,
+    fontWeight: '700',
+    letterSpacing: 0.6,
   },
   venueBlock: {
-    gap: Spacing.half,
+    gap: 3,
+    padding: Spacing.three - 2,
+    borderRadius: 12,
+    borderWidth: 1,
+    marginTop: Spacing.one,
+  },
+  venueName: {
+    fontSize: 15,
+    lineHeight: 20,
+    fontWeight: '500',
   },
   mapsLink: {
-    marginTop: Spacing.half,
+    fontSize: 13,
+    lineHeight: 18,
+    fontWeight: '500',
+    color: '#FF3B7F',
+    marginTop: 2,
   },
   actions: {
     marginTop: Spacing.two,
@@ -179,15 +239,17 @@ const styles = StyleSheet.create({
   },
   ticketButton: {
     paddingVertical: Spacing.three,
-    borderRadius: Spacing.three,
+    borderRadius: 12,
     alignItems: 'center',
   },
   lineupSection: {
     marginTop: Spacing.four,
     gap: Spacing.three,
   },
-  lineupHeading: {
-    fontSize: 20,
-    lineHeight: 24,
+  // Matches the feed's day headers so sections read consistently.
+  sectionHeading: {
+    fontSize: 15,
+    lineHeight: 20,
+    fontWeight: '600',
   },
 });
