@@ -133,13 +133,19 @@ try {
 check('self-friendship rejected', selfBlocked);
 
 console.log('\n--- attendance: unique per user+event ---');
-await db.query(`INSERT INTO markets (slug, name, state) VALUES ('test-market', 'Test', 'AZ')`);
-await db.query(`INSERT INTO venues (market_id, name) VALUES (1, 'Test Venue')`);
-await db.query(`INSERT INTO events (venue_id, title, event_date) VALUES (1, 'Test Show', CURRENT_DATE + 1)`);
-await db.query(`INSERT INTO event_attendance (user_id, event_id, status) VALUES ($1, 1, 'going')`, [u1]);
+// Ids are captured, never assumed: 0013 seeds real markets during migration,
+// so the fixtures no longer land on id 1.
+const marketId = (await db.query(
+  `INSERT INTO markets (slug, name, state) VALUES ('test-market', 'Test', 'AZ') RETURNING id`)).rows[0].id;
+const venueId = (await db.query(
+  `INSERT INTO venues (market_id, name) VALUES ($1, 'Test Venue') RETURNING id`, [marketId])).rows[0].id;
+const testEventId = (await db.query(
+  `INSERT INTO events (venue_id, title, event_date) VALUES ($1, 'Test Show', CURRENT_DATE + 1) RETURNING id`,
+  [venueId])).rows[0].id;
+await db.query(`INSERT INTO event_attendance (user_id, event_id, status) VALUES ($1, $2, 'going')`, [u1, testEventId]);
 let dupAttend = false;
 try {
-  await db.query(`INSERT INTO event_attendance (user_id, event_id) VALUES ($1, 1)`, [u1]);
+  await db.query(`INSERT INTO event_attendance (user_id, event_id) VALUES ($1, $2)`, [u1, testEventId]);
 } catch {
   dupAttend = true;
 }
@@ -147,7 +153,7 @@ check('duplicate attendance rejected', dupAttend);
 
 let badStatus = false;
 try {
-  await db.query(`INSERT INTO event_attendance (user_id, event_id, status) VALUES ($1, 1, 'nonsense')`, [u2]);
+  await db.query(`INSERT INTO event_attendance (user_id, event_id, status) VALUES ($1, $2, 'nonsense')`, [u2, testEventId]);
 } catch {
   badStatus = true;
 }
@@ -242,9 +248,9 @@ await db.query(`INSERT INTO artists (name, genre_tags) VALUES
   ('Bass Person', ARRAY['riddim','dubstep']::varchar[]),
   ('Trance Person', ARRAY['psytrance']::varchar[])`);
 await db.query(`INSERT INTO events (venue_id, title, event_date, doors_time) VALUES
-  (1, 'Tonight Techno', $1, '22:00'),
-  (1, 'In Three Days Bass', $2, '21:00'),
-  (1, 'In 20 Days Trance', $3, '20:00')`, [plus(0), plus(3), plus(20)]);
+  ($4, 'Tonight Techno', $1, '22:00'),
+  ($4, 'In Three Days Bass', $2, '21:00'),
+  ($4, 'In 20 Days Trance', $3, '20:00')`, [plus(0), plus(3), plus(20), venueId]);
 const evIds = (await db.query(`SELECT id, title FROM events ORDER BY id`)).rows;
 const byTitle = Object.fromEntries(evIds.map((r) => [r.title, r.id]));
 await db.query(`INSERT INTO lineups (event_id, artist_id, performance_order) VALUES
@@ -356,7 +362,7 @@ await db.query(`INSERT INTO user_favorite_genres (user_id, genre, affinity_score
 
 const recs = (await db.query(
   `SELECT title, match_score, matched_artists, matched_genres
-   FROM get_personalized_recommendations($1, 1)`, [u1])).rows;
+   FROM get_personalized_recommendations($1, $2)`, [u1, marketId])).rows;
 const recTitles = recs.map((r) => r.title);
 check('recommends the show with the favorited artist', recTitles.includes('In Three Days Bass'), JSON.stringify(recTitles));
 check('recommends the show matching a favorite genre', recTitles.includes('Tonight Techno'));
@@ -368,17 +374,17 @@ check('matched_artists is populated', (recs[0]?.matched_artists ?? []).includes(
 // Test Show (event 1) already has an attendance row for u1 from earlier.
 await db.query(`INSERT INTO user_favorite_genres (user_id, genre, affinity_score) VALUES ($1, 'riddim', 5)
   ON CONFLICT DO NOTHING`, [u1]);
-const recIds = (await db.query(`SELECT event_id FROM get_personalized_recommendations($1, 1)`, [u1])).rows.map((r) => r.event_id);
-check('already-logged events are excluded from recommendations', !recIds.includes(1), JSON.stringify(recIds));
+const recIds = (await db.query(`SELECT event_id FROM get_personalized_recommendations($1, $2)`, [u1, marketId])).rows.map((r) => r.event_id);
+check('already-logged events are excluded from recommendations', !recIds.includes(testEventId), JSON.stringify(recIds));
 
-const noTaste = (await db.query(`SELECT * FROM get_personalized_recommendations($1, 1)`, [u2])).rows;
+const noTaste = (await db.query(`SELECT * FROM get_personalized_recommendations($1, $2)`, [u2, marketId])).rows;
 check('user with no taste profile gets no recommendations', noTaste.length === 0);
 
 console.log('\n--- 0012: festivals + live-set columns ---');
 // Seeded heuristic: keyword OR >=8 artists. 'Tonight Techno' has 2 artists and
 // no keyword, so it must NOT be flagged.
 await db.query(`INSERT INTO events (venue_id, title, event_date, doors_time) VALUES
-  (1, 'Testville Music Festival', CURRENT_DATE + 2, '14:00')`);
+  ($1, 'Testville Music Festival', CURRENT_DATE + 2, '14:00')`, [venueId]);
 await db.query(`UPDATE events e SET is_festival = true
   WHERE e.is_festival = false AND (e.title ~* '\\y(festival|fest|massive|carnival)\\y'
     OR (SELECT count(*) FROM lineups l WHERE l.event_id = e.id) >= 8)`);
@@ -400,6 +406,32 @@ check('row exposes is_festival', festRow.is_festival === true);
 check('artists JSON now carries mixcloud_url',
   'mixcloud_url' in ((await db.query(
     `SELECT artists FROM get_filtered_events('test-market','all',null,false) WHERE title='Tonight Techno'`)).rows[0].artists[0] ?? {}));
+
+console.log('\n--- 0014: ticket click tracking ---');
+await db.exec(`SELECT set_config('test.uid', '${u1}', false)`);
+
+const anonClick = await asRole('anon', `INSERT INTO ticket_clicks (event_id) VALUES ($1)`, [testEventId]);
+check('anon can log a click (signed-out visitors count)', anonClick.ok, anonClick.err ?? '');
+
+const ownClick = await asRole('authenticated', `INSERT INTO ticket_clicks (event_id, user_id) VALUES ($2, $1)`, [u1, testEventId]);
+check('a user can log a click as themselves', ownClick.ok, ownClick.err ?? '');
+
+// Attributing a click to someone else would corrupt the numbers a promoter is
+// billed against.
+const spoof = await asRole('authenticated', `INSERT INTO ticket_clicks (event_id, user_id) VALUES ($2, $1)`, [u2, testEventId]);
+check('a user CANNOT attribute a click to another user', !spoof.ok, spoof.ok ? 'SPOOFED' : '');
+
+const readBack = await asRole('authenticated', `SELECT * FROM ticket_clicks`);
+check('clients cannot read the click log', !readBack.ok, readBack.ok ? 'READABLE' : '');
+
+const statsLeak = await asRole('anon', `SELECT * FROM ticket_click_stats`);
+check('clients cannot read the rollup either', !statsLeak.ok || (statsLeak.rows ?? []).length === 0,
+  statsLeak.ok ? `returned ${statsLeak.rows.length} rows` : '');
+
+const stats = (await db.query(`SELECT event_id, clicks, signed_in_users FROM ticket_click_stats`)).rows;
+check('service role sees the rollup', stats.length === 1 && Number(stats[0].clicks) === 2, JSON.stringify(stats));
+check('signed-in users counted separately from anonymous',
+  Number(stats[0].signed_in_users) === 1, JSON.stringify(stats));
 
 console.log('\n--- friend graph ---');
 // Fresh users with known usernames (the trigger derives username from metadata).
@@ -471,11 +503,11 @@ check('remove_friend drops the edge',
 console.log('\n--- friends_going: social proof, friends only ---');
 // alice & bob are friends. dave is a stranger to alice. All three RSVP event 1.
 await db.query(`INSERT INTO event_attendance (user_id, event_id, status) VALUES
-  ($1, 1, 'going'), ($2, 1, 'going'), ($3, 1, 'going')
-  ON CONFLICT (user_id, event_id) DO NOTHING`, [idOf.alice, idOf.bob, idOf.dave]);
+  ($1, $4, 'going'), ($2, $4, 'going'), ($3, $4, 'going')
+  ON CONFLICT (user_id, event_id) DO NOTHING`, [idOf.alice, idOf.bob, idOf.dave, testEventId]);
 
 await as(idOf.alice);
-const aliceSeesGoing = (await db.query(`SELECT username FROM friends_going(1)`)).rows.map((r) => r.username);
+const aliceSeesGoing = (await db.query(`SELECT username FROM friends_going($1)`, [testEventId])).rows.map((r) => r.username);
 check('alice sees her friend bob going', aliceSeesGoing.includes('bob'), JSON.stringify(aliceSeesGoing));
 check('alice does NOT see the stranger dave', !aliceSeesGoing.includes('dave'), JSON.stringify(aliceSeesGoing));
 check('friends_going excludes the caller themselves', !aliceSeesGoing.includes('alice'), JSON.stringify(aliceSeesGoing));
@@ -483,12 +515,12 @@ check('friends_going excludes the caller themselves', !aliceSeesGoing.includes('
 // dave, friend of nobody, sees no one going even though bob and alice are.
 await as(idOf.dave);
 check('a friendless user sees no friends going',
-  (await db.query(`SELECT * FROM friends_going(1)`)).rows.length === 0);
+  (await db.query(`SELECT * FROM friends_going($1)`, [testEventId])).rows.length === 0);
 
 // Anonymous (no test.uid) leaks nothing.
 await db.exec(`SELECT set_config('test.uid', '', false)`);
 check('anon caller sees no friends going',
-  (await db.query(`SELECT * FROM friends_going(1)`)).rows.length === 0);
+  (await db.query(`SELECT * FROM friends_going($1)`, [testEventId])).rows.length === 0);
 
 console.log(`\n${failures === 0 ? 'ALL PASSED' : failures + ' FAILURE(S)'}`);
 await db.close();

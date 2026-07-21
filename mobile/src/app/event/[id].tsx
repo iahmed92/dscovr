@@ -9,15 +9,18 @@ import { FriendsGoing } from '@/components/friends-going';
 import { ThemedText } from '@/components/themed-text';
 import { ThemedView } from '@/components/themed-view';
 import { MaxContentWidth, Spacing } from '@/constants/theme';
+import { useAuth } from '@/hooks/use-auth';
 import { useEvent } from '@/hooks/use-event';
 import { useTheme } from '@/hooks/use-theme';
 import { lineupArtists, sourceLabel } from '@/lib/event-display';
 import { formatEventDate, formatEventTime } from '@/lib/format-date';
 import { mapsUrl } from '@/lib/maps';
+import { logTicketClick } from '@/lib/track';
 
 export default function EventDetailScreen() {
   const { id } = useLocalSearchParams<{ id: string }>();
   const theme = useTheme();
+  const { userId } = useAuth();
 
   // Number('abc') is NaN, which is truthy enough to reach the query and comes
   // back as the Postgres error "invalid input syntax for type integer: NaN".
@@ -124,7 +127,11 @@ export default function EventDetailScreen() {
 
               {event.ticket_url && (
                 <TouchableOpacity
-                  onPress={() => Linking.openURL(event.ticket_url!)}
+                  onPress={() => {
+                    // Log before navigating away; the call doesn't block it.
+                    logTicketClick(event.id, userId);
+                    Linking.openURL(event.ticket_url!);
+                  }}
                   style={[styles.ticketButton, { backgroundColor: theme.text }]}>
                   <ThemedText type="smallBold" style={{ color: theme.background }}>
                     Get Tickets
