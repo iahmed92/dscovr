@@ -11,7 +11,11 @@ const VIBE_ACCENT = '#FF3B7F';
 const SPOTIFY_GREEN = '#1DB954';
 const MIXCLOUD_BLUE = '#5000FF';
 const YOUTUBE_RED = '#FF0033';
-const ICON = 14;
+// Detail screen has room to breathe, so its icons are the larger tap target.
+// The feed sits between: big enough to hit comfortably, small enough that a
+// row of them doesn't dominate a compact card.
+const ICON = 19;
+const COMPACT_ICON = 16;
 
 function IconLink({ url, icon, color }: { url: string; icon: 'spotify' | 'soundcloud'; color: string }) {
   return (
@@ -70,7 +74,7 @@ function LiveSetLink({ artist }: { artist: Artist }) {
   );
 }
 
-function VibeCheckButton({ artistId }: { artistId: number }) {
+function VibeCheckButton({ artistId, size = ICON }: { artistId: number; size?: number }) {
   const theme = useTheme();
   const { activeArtistId, isPlaying, loadingArtistId, errorArtistId, toggle } = useNowPlaying();
 
@@ -79,19 +83,19 @@ function VibeCheckButton({ artistId }: { artistId: number }) {
   const hasNoPreview = errorArtistId === artistId;
 
   if (isLoading) {
-    return <ActivityIndicator size="small" color={VIBE_ACCENT} style={styles.vibeButton} />;
+    return <ActivityIndicator size="small" color={VIBE_ACCENT} style={{ width: size, alignItems: 'center' }} />;
   }
 
   return (
     <TouchableOpacity
       onPress={() => toggle(artistId)}
       hitSlop={10}
-      style={styles.vibeButton}
+      style={{ width: size, alignItems: 'center' }}
       accessibilityRole="button"
       accessibilityLabel={isActive && isPlaying ? 'Pause preview' : 'Play preview'}>
       <FontAwesome5
         name={isActive && isPlaying ? 'pause' : 'play'}
-        size={ICON}
+        size={size}
         color={hasNoPreview ? theme.textSecondary : VIBE_ACCENT}
         style={hasNoPreview ? styles.mutedIcon : undefined}
       />
@@ -101,7 +105,7 @@ function VibeCheckButton({ artistId }: { artistId: number }) {
 
 // Luma-style lineup: a wrap-around grid of artist cells rather than a full-width
 // vertical stack. Each cell is the name with its streaming indicators tucked
-// underneath at 14px, so the icons read as quiet metadata instead of a column
+// underneath, so the icons read as quiet metadata instead of a column
 // of buttons fighting the names for attention.
 // `compact` is the feed variant: play button beside the name, inline and
 // wrapping, with the profile links left to the detail screen. Keeps one-tap
@@ -128,7 +132,7 @@ export function ArtistLineup({
       <View style={styles.compactRow}>
         {shown.map((artist) => (
           <View key={artist.id} style={styles.compactItem}>
-            <VibeCheckButton artistId={artist.id} />
+            <VibeCheckButton artistId={artist.id} size={COMPACT_ICON} />
             <ThemedText style={[styles.compactName, { color: theme.textSecondary }]} numberOfLines={1}>
               {artist.name}
             </ThemedText>
@@ -199,10 +203,6 @@ const styles = StyleSheet.create({
   icons: {
     flexDirection: 'row',
     gap: Spacing.three,
-    alignItems: 'center',
-  },
-  vibeButton: {
-    width: ICON,
     alignItems: 'center',
   },
   mutedIcon: {
