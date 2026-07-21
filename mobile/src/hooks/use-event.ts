@@ -39,7 +39,12 @@ export function useEvent(eventId: number | null) {
       if (fetchError) {
         setError(fetchError.message);
       } else {
-        setEvent((data as unknown as EventWithDetails) ?? null);
+        // Flatten the embedded promoter so the detail screen and the feed read
+        // the same field rather than two shapes for one fact.
+        const row = data as unknown as
+          | (EventWithDetails & { promoters?: { name: string } | null })
+          | null;
+        setEvent(row ? { ...row, promoter_name: row.promoters?.name ?? null } : null);
         setError(null);
       }
       setLoading(false);

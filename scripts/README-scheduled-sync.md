@@ -24,6 +24,18 @@ Unregister-ScheduledTask -TaskName "DSCOVR Nightly Sync" -Confirm:$false
 `-StartWhenAvailable` is set, so a run missed because the machine was asleep
 fires once it wakes rather than being skipped.
 
+The execution time limit is **6 hours** (`PT6H`). It was 2 when ingestion covered
+4 markets and took ~6 minutes; migration 0013 took that to 26, so the Ticketmaster
+pass alone scales roughly 6x before the scrape and enrichment run. If the task
+exceeds its limit Windows kills it mid-pass, leaving some markets ingested and
+others stale with only a truncated log — hence the headroom. To change it:
+
+```powershell
+$t = Get-ScheduledTask -TaskName "DSCOVR Nightly Sync"
+$t.Settings.ExecutionTimeLimit = "PT6H"   # ISO-8601 duration, not "06:00:00"
+Set-ScheduledTask -TaskName "DSCOVR Nightly Sync" -Settings $t.Settings
+```
+
 ## Why a local scheduled task and not something better
 
 - **GitHub Actions** would be the natural home, but this repo has no remote —

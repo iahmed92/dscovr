@@ -38,10 +38,11 @@ export type EventWithDetails = {
   flyer_url: string | null;
   source_type: string;
   venues: Venue | null;
-  promoters?: { name: string } | null;
   lineups: LineupSlot[];
   is_festival?: boolean;
   is_featured?: boolean;
+  // Populated from the RPC's promoter_name on the feed and flattened from the
+  // embedded promoters row on the detail screen, so both paths agree.
   promoter_name?: string | null;
   // Only the feed carries these — they come from get_filtered_events, not from
   // the plain event select the detail screen uses.

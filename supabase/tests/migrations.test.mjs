@@ -448,28 +448,45 @@ check('anon CANNOT read stripe_customer_id', !promoBilling.ok, promoBilling.ok ?
 const promoStar = await asRole('anon', `SELECT * FROM promoters LIMIT 1`);
 check('anon SELECT * on promoters fails closed', !promoStar.ok, promoStar.ok ? 'LEAKED' : '');
 
-console.log('\n--- 0014: ticket click tracking ---');
+console.log('\n--- 0014/0017: ticket click tracking ---');
 await db.exec(`SELECT set_config('test.uid', '${u1}', false)`);
 
-const anonClick = await asRole('anon', `INSERT INTO ticket_clicks (event_id) VALUES ($1)`, [testEventId]);
-check('anon can log a click (signed-out visitors count)', anonClick.ok, anonClick.err ?? '');
+// Direct writes are revoked; everything goes through the RPC now.
+const directInsert = await asRole('authenticated', `INSERT INTO ticket_clicks (event_id) VALUES ($1)`, [testEventId]);
+check('clients can no longer INSERT directly', !directInsert.ok, directInsert.ok ? 'WRITABLE' : '');
 
-const ownClick = await asRole('authenticated', `INSERT INTO ticket_clicks (event_id, user_id) VALUES ($2, $1)`, [u1, testEventId]);
-check('a user can log a click as themselves', ownClick.ok, ownClick.err ?? '');
+// auth.uid() here reads a GUC, so a genuinely anonymous caller means clearing
+// it — otherwise the "anon" role still carries a uid and the row is attributed.
+await db.exec(`SELECT set_config('test.uid', '', false)`);
+const rpcAnon = await asRole('anon', `SELECT log_ticket_click($1)`, [testEventId]);
+check('anon can log through the RPC', rpcAnon.ok, rpcAnon.err ?? '');
+await db.exec(`SELECT set_config('test.uid', '${u1}', false)`);
 
-// Attributing a click to someone else would corrupt the numbers a promoter is
-// billed against.
-const spoof = await asRole('authenticated', `INSERT INTO ticket_clicks (event_id, user_id) VALUES ($2, $1)`, [u2, testEventId]);
-check('a user CANNOT attribute a click to another user', !spoof.ok, spoof.ok ? 'SPOOFED' : '');
+const rpcUser = await asRole('authenticated', `SELECT log_ticket_click($1)`, [testEventId]);
+check('a signed-in user can log through the RPC', rpcUser.ok, rpcUser.err ?? '');
+
+// user_id is stamped from auth.uid(), so a caller cannot forge attribution.
+const attributed = (await db.query(`SELECT user_id FROM ticket_clicks WHERE user_id IS NOT NULL`)).rows;
+check('the RPC stamps the caller, not a client-supplied id',
+  attributed.length === 1 && attributed[0].user_id === u1, JSON.stringify(attributed));
+
+// Double-tap / refresh loop collapses for a signed-in user.
+await asRole('authenticated', `SELECT log_ticket_click($1)`, [testEventId]);
+await asRole('authenticated', `SELECT log_ticket_click($1)`, [testEventId]);
+const afterRepeat = (await db.query(`SELECT count(*)::int AS n FROM ticket_clicks WHERE user_id = $1`, [u1])).rows[0].n;
+check('repeat clicks within the window are collapsed', afterRepeat === 1, `got ${afterRepeat}`);
+
+// Orphan ids are rejected rather than accumulating.
+await db.exec(`SELECT set_config('test.uid', '', false)`);
+await asRole('anon', `SELECT log_ticket_click(999999)`);
+await db.exec(`SELECT set_config('test.uid', '${u1}', false)`);
+const orphans = (await db.query(`SELECT count(*)::int AS n FROM ticket_clicks WHERE event_id = 999999`)).rows[0].n;
+check('clicks for a nonexistent event are dropped', orphans === 0, `got ${orphans}`);
 
 const readBack = await asRole('authenticated', `SELECT * FROM ticket_clicks`);
-check('clients cannot read the click log', !readBack.ok, readBack.ok ? 'READABLE' : '');
+check('clients still cannot read the click log', !readBack.ok, readBack.ok ? 'READABLE' : '');
 
-const statsLeak = await asRole('anon', `SELECT * FROM ticket_click_stats`);
-check('clients cannot read the rollup either', !statsLeak.ok || (statsLeak.rows ?? []).length === 0,
-  statsLeak.ok ? `returned ${statsLeak.rows.length} rows` : '');
-
-const stats = (await db.query(`SELECT event_id, clicks, signed_in_users FROM ticket_click_stats`)).rows;
+const stats = (await db.query(`SELECT clicks, signed_in_users FROM ticket_click_stats`)).rows;
 check('service role sees the rollup', stats.length === 1 && Number(stats[0].clicks) === 2, JSON.stringify(stats));
 check('signed-in users counted separately from anonymous',
   Number(stats[0].signed_in_users) === 1, JSON.stringify(stats));
