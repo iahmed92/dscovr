@@ -11,6 +11,7 @@ import { BottomTabInset, MaxContentWidth, Spacing } from '@/constants/theme';
 import { useAuth } from '@/hooks/use-auth';
 import { useMyShows } from '@/hooks/use-my-shows';
 import { useProfile } from '@/hooks/use-profile';
+import { useTasteProfile } from '@/hooks/use-taste-profile';
 import { useTheme } from '@/hooks/use-theme';
 
 // The former Explore starter boilerplate is now the account surface — sign-in
@@ -23,6 +24,7 @@ export default function AccountScreen() {
   const { userId, initializing, signOut } = useAuth();
   const { profile } = useProfile();
   const { upcoming, past, loading, reload } = useMyShows();
+  const { artists: favoriteArtists, genres: favoriteGenres, connected: spotifyConnected } = useTasteProfile();
 
   const signedIn = userId !== null;
 
@@ -61,12 +63,66 @@ export default function AccountScreen() {
             </View>
           ) : (
             <>
-              <ThemedView type="backgroundElement" style={styles.card}>
-                <ThemedText type="small" themeColor="textSecondary">
-                  Signed in as
-                </ThemedText>
-                <ThemedText type="default">{profile?.username ?? '—'}</ThemedText>
+              <ThemedView type="backgroundElement" style={[styles.card, { borderColor: theme.border }]}>
+                <View style={styles.profileRow}>
+                  <View style={[styles.avatar, { backgroundColor: theme.backgroundSelected }]}>
+                    <ThemedText type="default" themeColor="textSecondary">
+                      {(profile?.username ?? '?').charAt(0).toUpperCase()}
+                    </ThemedText>
+                  </View>
+                  <View style={styles.profileText}>
+                    <ThemedText type="default">{profile?.username ?? '—'}</ThemedText>
+                    <ThemedText type="small" themeColor="textSecondary">
+                      {past.length} attended · {upcoming.length} going
+                    </ThemedText>
+                  </View>
+                  <View
+                    style={[
+                      styles.badge,
+                      spotifyConnected
+                        ? { borderColor: '#1DB954' }
+                        : { borderColor: theme.border },
+                    ]}>
+                    <ThemedText
+                      style={[
+                        styles.badgeText,
+                        { color: spotifyConnected ? '#1DB954' : theme.textSecondary },
+                      ]}>
+                      {spotifyConnected ? 'SPOTIFY' : 'NOT LINKED'}
+                    </ThemedText>
+                  </View>
+                </View>
+
+                {favoriteGenres.length > 0 && (
+                  <ThemedText type="small" themeColor="textSecondary" numberOfLines={1}>
+                    {favoriteGenres.map((g) => g.genre).join(' · ')}
+                  </ThemedText>
+                )}
               </ThemedView>
+
+              {favoriteArtists.length > 0 && (
+                <View style={styles.section}>
+                  <ThemedText style={styles.sectionLabel} themeColor="textSecondary">
+                    YOUR ARTISTS
+                  </ThemedText>
+                  <View style={styles.artistWrap}>
+                    {favoriteArtists.slice(0, 12).map((a) => (
+                      <View
+                        key={a.id}
+                        style={[styles.artistChip, { borderColor: theme.border }]}>
+                        <ThemedText type="small" themeColor="textSecondary">
+                          {a.name}
+                        </ThemedText>
+                      </View>
+                    ))}
+                    {favoriteArtists.length > 12 && (
+                      <ThemedText type="small" themeColor="textSecondary">
+                        +{favoriteArtists.length - 12}
+                      </ThemedText>
+                    )}
+                  </View>
+                </View>
+              )}
 
               <TouchableOpacity
                 onPress={() => router.push('/for-you')}
@@ -180,7 +236,48 @@ const styles = StyleSheet.create({
   card: {
     padding: Spacing.three,
     borderRadius: Spacing.three,
-    gap: Spacing.half,
+    gap: Spacing.two,
+    borderWidth: 1,
+  },
+  profileRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: Spacing.three,
+  },
+  avatar: {
+    width: 44,
+    height: 44,
+    borderRadius: 999,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  profileText: {
+    flex: 1,
+    gap: 2,
+  },
+  badge: {
+    paddingHorizontal: Spacing.two,
+    paddingVertical: 3,
+    borderRadius: 999,
+    borderWidth: 1,
+  },
+  badgeText: {
+    fontSize: 10,
+    lineHeight: 14,
+    fontWeight: '700',
+    letterSpacing: 0.5,
+  },
+  artistWrap: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: Spacing.two,
+    alignItems: 'center',
+  },
+  artistChip: {
+    paddingHorizontal: Spacing.three - 4,
+    paddingVertical: Spacing.one + 1,
+    borderRadius: 999,
+    borderWidth: 1,
   },
   forYou: {
     flexDirection: 'row',

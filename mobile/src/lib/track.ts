@@ -30,3 +30,20 @@ export function logTicketClick(eventId: number) {
     }
   );
 }
+
+// Tags an outbound ticket link so a promoter's analytics can see the referral.
+// Parsed rather than string-appended: many ticket_urls already carry a query
+// string, and a naive `?utm_source=` would corrupt them. Returns the original
+// URL untouched if it can't be parsed, since a working untagged link beats a
+// broken tagged one.
+export function taggedTicketUrl(url: string): string {
+  try {
+    const parsed = new URL(url);
+    if (!parsed.searchParams.has('utm_source')) {
+      parsed.searchParams.set('utm_source', 'dscovr');
+    }
+    return parsed.toString();
+  } catch {
+    return url;
+  }
+}

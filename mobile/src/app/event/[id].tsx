@@ -6,6 +6,7 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { ArtistLineup } from '@/components/artist-lineup';
 import { AttendanceButton } from '@/components/attendance-button';
 import { FriendsGoing } from '@/components/friends-going';
+import { InviteCrewButton } from '@/components/invite-crew-button';
 import { ThemedText } from '@/components/themed-text';
 import { ThemedView } from '@/components/themed-view';
 import { MaxContentWidth, Spacing } from '@/constants/theme';
@@ -14,7 +15,7 @@ import { useTheme } from '@/hooks/use-theme';
 import { lineupArtists, sourceLabel } from '@/lib/event-display';
 import { formatEventDate, formatEventTime } from '@/lib/format-date';
 import { mapsUrl } from '@/lib/maps';
-import { logTicketClick } from '@/lib/track';
+import { logTicketClick, taggedTicketUrl } from '@/lib/track';
 
 export default function EventDetailScreen() {
   const { id } = useLocalSearchParams<{ id: string }>();
@@ -122,13 +123,14 @@ export default function EventDetailScreen() {
             <View style={styles.actions}>
               <AttendanceButton eventId={event.id} />
               <FriendsGoing eventId={event.id} />
+              <InviteCrewButton eventId={event.id} title={event.title} />
 
               {event.ticket_url && (
                 <TouchableOpacity
                   onPress={() => {
                     // Log before navigating away; the call doesn't block it.
                     logTicketClick(event.id);
-                    Linking.openURL(event.ticket_url!);
+                    Linking.openURL(taggedTicketUrl(event.ticket_url!));
                   }}
                   style={[styles.ticketButton, { backgroundColor: theme.text }]}>
                   <ThemedText type="smallBold" style={{ color: theme.background }}>

@@ -3,8 +3,10 @@ import { Link } from 'expo-router';
 import { StyleSheet, TouchableOpacity, View } from 'react-native';
 
 import { ArtistLineup } from '@/components/artist-lineup';
+import { FriendAvatarStack } from '@/components/friend-avatar-stack';
 import { ThemedText } from '@/components/themed-text';
 import { Spacing } from '@/constants/theme';
+import type { FriendGoingBrief } from '@/hooks/use-friends-going-batch';
 import { useTheme } from '@/hooks/use-theme';
 import { lineupArtists } from '@/lib/event-display';
 import { formatEventTime } from '@/lib/format-date';
@@ -16,7 +18,13 @@ import { EventWithDetails } from '@/lib/types';
 //
 // The lineup shows as a single muted line here rather than the interactive grid;
 // Vibe Check playback lives on the detail screen, so the feed stays scannable.
-export function EventCard({ event }: { event: EventWithDetails }) {
+export function EventCard({
+  event,
+  friendsGoing,
+}: {
+  event: EventWithDetails;
+  friendsGoing?: FriendGoingBrief[];
+}) {
   const theme = useTheme();
 
   const artists = lineupArtists(event.lineups);
@@ -55,6 +63,12 @@ export function EventCard({ event }: { event: EventWithDetails }) {
           {/* Compact lineup: one-tap previews without the icon column. Capped so
               a 30-artist festival doesn't turn its card into a wall. */}
           {artists.length > 0 && <ArtistLineup artists={artists} compact max={4} />}
+
+          {/* Social proof last, so it reads as a footnote on the card rather
+              than competing with the title. */}
+          {friendsGoing && friendsGoing.length > 0 && (
+            <FriendAvatarStack friends={friendsGoing} />
+          )}
         </View>
 
         {event.flyer_url ? (

@@ -8,6 +8,7 @@ import { ThemedText } from '@/components/themed-text';
 import { ThemedView } from '@/components/themed-view';
 import { BottomTabInset, MaxContentWidth, Spacing } from '@/constants/theme';
 import { useEvents } from '@/hooks/use-events';
+import { useFriendsGoingBatch } from '@/hooks/use-friends-going-batch';
 import { useMarkets } from '@/hooks/use-markets';
 import { stateName } from '@/lib/states';
 import {
@@ -61,6 +62,10 @@ export default function HomeScreen() {
 
   // Day headers + rail metadata, recomputed only when the feed changes.
   const timeline = useMemo(() => buildTimeline(events), [events]);
+
+  // One batched lookup for the whole page rather than a request per card.
+  const eventIds = useMemo(() => events.map((e) => e.id), [events]);
+  const friendsByEvent = useFriendsGoingBatch(eventIds);
 
   // Grouped by state so the picker reads state -> city. Sorted by state name
   // then city, because Dropdown only starts a new header when the group
@@ -161,7 +166,11 @@ export default function HomeScreen() {
               item.type === 'header' ? (
                 <DateHeader label={item.label} />
               ) : (
-                <TimelineRow event={item.event} isLastOfDay={item.isLastOfDay} />
+                <TimelineRow
+                  event={item.event}
+                  isLastOfDay={item.isLastOfDay}
+                  friendsGoing={friendsByEvent.get(item.event.id)}
+                />
               )
             }
             contentContainerStyle={styles.list}

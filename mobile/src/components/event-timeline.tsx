@@ -3,6 +3,7 @@ import { StyleSheet, View } from 'react-native';
 import { EventCard } from '@/components/event-card';
 import { ThemedText } from '@/components/themed-text';
 import { Spacing } from '@/constants/theme';
+import type { FriendGoingBrief } from '@/hooks/use-friends-going-batch';
 import { useTheme } from '@/hooks/use-theme';
 import { formatSectionDate } from '@/lib/format-date';
 import { EventWithDetails } from '@/lib/types';
@@ -52,9 +53,11 @@ export function DateHeader({ label }: { label: string }) {
 export function TimelineRow({
   event,
   isLastOfDay,
+  friendsGoing,
 }: {
   event: EventWithDetails;
   isLastOfDay: boolean;
+  friendsGoing?: FriendGoingBrief[];
 }) {
   const theme = useTheme();
 
@@ -74,7 +77,7 @@ export function TimelineRow({
       </View>
 
       <View style={styles.card}>
-        <EventCard event={event} />
+        <EventCard event={event} friendsGoing={friendsGoing} />
       </View>
     </View>
   );

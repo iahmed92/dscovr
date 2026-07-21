@@ -491,6 +491,7 @@ check('service role sees the rollup', stats.length === 1 && Number(stats[0].clic
 check('signed-in users counted separately from anonymous',
   Number(stats[0].signed_in_users) === 1, JSON.stringify(stats));
 
+
 console.log('\n--- friend graph ---');
 // Fresh users with known usernames (the trigger derives username from metadata).
 for (const name of ['alice', 'bob', 'carol', 'dave']) {
@@ -579,6 +580,70 @@ check('a friendless user sees no friends going',
 await db.exec(`SELECT set_config('test.uid', '', false)`);
 check('anon caller sees no friends going',
   (await db.query(`SELECT * FROM friends_going($1)`, [testEventId])).rows.length === 0);
+
+console.log('\n--- 0018: growth + monetization ---');
+await db.exec(`SELECT set_config('test.uid', '${idOf.alice}', false)`);
+
+// --- contact matching: the enumeration guards are the point ---
+const noPhone = await asRole('authenticated', `SELECT * FROM get_contacts_on_dscovr(ARRAY['6025550147'])`);
+check('caller without a phone is refused (enumeration needs a real identity)',
+  !noPhone.ok, noPhone.ok ? 'ALLOWED' : '');
+
+await db.query(`UPDATE profiles SET phone = '+1 (602) 555-0100' WHERE id = $1`, [idOf.alice]);
+await db.query(`UPDATE profiles SET phone = '602-555-0199' WHERE id = $1`, [idOf.bob]);
+
+const matched = await asRole('authenticated', `SELECT username FROM get_contacts_on_dscovr($1)`,
+  [['(602) 555-0199', '6025550000']]);
+check('matches a contact across different phone formats',
+  matched.ok && matched.rows.length === 1 && matched.rows[0].username === 'bob', JSON.stringify(matched.rows ?? matched.err));
+check('unknown numbers reveal nothing', (matched.rows ?? []).length === 1);
+
+const selfMatch = await asRole('authenticated', `SELECT username FROM get_contacts_on_dscovr($1)`,
+  [['602-555-0100']]);
+check('caller never matches themselves', (selfMatch.rows ?? []).length === 0, JSON.stringify(selfMatch.rows));
+
+const tooMany = await asRole('authenticated',
+  `SELECT * FROM get_contacts_on_dscovr($1)`, [Array.from({ length: 501 }, (_, i) => String(6025550000 + i))]);
+check('oversized batches are rejected (no range sweeping)', !tooMany.ok, tooMany.ok ? 'ALLOWED' : '');
+
+const contactCols = await asRole('authenticated', `SELECT phone FROM get_contacts_on_dscovr(ARRAY['6025550199'])`);
+check('the result never exposes a phone number', !contactCols.ok, contactCols.ok ? 'LEAKED' : '');
+
+// --- batched social proof keeps the friends-only boundary ---
+const batch = await asRole('authenticated', `SELECT event_id, username FROM friends_going_batch($1)`, [[testEventId]]);
+check('batch social proof returns friends', batch.ok && batch.rows.some((r) => r.username === 'bob'),
+  JSON.stringify(batch.rows ?? batch.err));
+check('batch social proof still excludes strangers',
+  !(batch.rows ?? []).some((r) => r.username === 'dave'), JSON.stringify(batch.rows));
+
+await db.exec(`SELECT set_config('test.uid', '', false)`);
+const batchAnon = await asRole('anon', `SELECT * FROM friends_going_batch($1)`, [[testEventId]]);
+check('anon sees nobody in the batch', (batchAnon.rows ?? []).length === 0);
+await db.exec(`SELECT set_config('test.uid', '${idOf.alice}', false)`);
+
+// --- VIP leads carry a phone, so they are locked down like one ---
+const vipInsert = await asRole('authenticated',
+  `INSERT INTO vip_inquiries (event_id, user_id, phone, group_size) VALUES ($1, $2, '6025550100', 6)`,
+  [testEventId, idOf.alice]);
+check('a user can submit their own VIP inquiry', vipInsert.ok, vipInsert.err ?? '');
+
+const vipSpoof = await asRole('authenticated',
+  `INSERT INTO vip_inquiries (event_id, user_id, phone) VALUES ($1, $2, '6025559999')`,
+  [testEventId, idOf.dave]);
+check('a user cannot submit an inquiry as someone else', !vipSpoof.ok, vipSpoof.ok ? 'SPOOFED' : '');
+
+const vipPhone = await asRole('authenticated', `SELECT phone FROM vip_inquiries`);
+check('the lead phone is not readable by clients', !vipPhone.ok, vipPhone.ok ? 'LEAKED' : '');
+
+await db.exec(`SELECT set_config('test.uid', '${idOf.bob}', false)`);
+const vipOther = await asRole('authenticated', `SELECT id FROM vip_inquiries`);
+check('a user cannot read another user inquiry', (vipOther.rows ?? []).length === 0, JSON.stringify(vipOther.rows));
+await db.exec(`SELECT set_config('test.uid', '${idOf.alice}', false)`);
+
+// --- demand analytics suppresses small cells ---
+const demand = (await db.query(`SELECT * FROM promoter_market_demand`)).rows;
+check('cells under 5 users are suppressed (no identifying individuals)',
+  demand.every((r) => Number(r.users) >= 5), JSON.stringify(demand));
 
 console.log(`\n${failures === 0 ? 'ALL PASSED' : failures + ' FAILURE(S)'}`);
 await db.close();
