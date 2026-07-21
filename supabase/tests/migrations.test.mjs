@@ -374,6 +374,33 @@ check('already-logged events are excluded from recommendations', !recIds.include
 const noTaste = (await db.query(`SELECT * FROM get_personalized_recommendations($1, 1)`, [u2])).rows;
 check('user with no taste profile gets no recommendations', noTaste.length === 0);
 
+console.log('\n--- 0012: festivals + live-set columns ---');
+// Seeded heuristic: keyword OR >=8 artists. 'Tonight Techno' has 2 artists and
+// no keyword, so it must NOT be flagged.
+await db.query(`INSERT INTO events (venue_id, title, event_date, doors_time) VALUES
+  (1, 'Testville Music Festival', CURRENT_DATE + 2, '14:00')`);
+await db.query(`UPDATE events e SET is_festival = true
+  WHERE e.is_festival = false AND (e.title ~* '\\y(festival|fest|massive|carnival)\\y'
+    OR (SELECT count(*) FROM lineups l WHERE l.event_id = e.id) >= 8)`);
+
+const fests = (await db.query(`SELECT title FROM events WHERE is_festival`)).rows.map((r) => r.title);
+check('keyword seeds a festival', fests.includes('Testville Music Festival'), JSON.stringify(fests));
+check('an ordinary 2-artist show is not flagged', !fests.includes('Tonight Techno'), JSON.stringify(fests));
+
+const festFeed = (await db.query(
+  `SELECT title FROM get_filtered_events('test-market', 'all', null, true)`)).rows.map((r) => r.title);
+check('festivals_only returns just festivals', festFeed.every((t) => fests.includes(t)) && festFeed.length > 0, JSON.stringify(festFeed));
+const allFeed3 = (await db.query(
+  `SELECT title FROM get_filtered_events('test-market', 'all', null, false)`)).rows.map((r) => r.title);
+check('festivals_only=false still returns everything', allFeed3.length > festFeed.length, `all=${allFeed3.length} fest=${festFeed.length}`);
+
+const festRow = (await db.query(
+  `SELECT is_festival, artists FROM get_filtered_events('test-market','all',null,true) LIMIT 1`)).rows[0];
+check('row exposes is_festival', festRow.is_festival === true);
+check('artists JSON now carries mixcloud_url',
+  'mixcloud_url' in ((await db.query(
+    `SELECT artists FROM get_filtered_events('test-market','all',null,false) WHERE title='Tonight Techno'`)).rows[0].artists[0] ?? {}));
+
 console.log('\n--- friend graph ---');
 // Fresh users with known usernames (the trigger derives username from metadata).
 for (const name of ['alice', 'bob', 'carol', 'dave']) {

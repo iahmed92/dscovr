@@ -42,8 +42,10 @@ function toEventWithDetails(row: FilteredEventRow): EventWithDetails {
         name: artist.name,
         spotify_url: artist.spotify_url,
         soundcloud_url: artist.soundcloud_url,
+        mixcloud_url: artist.mixcloud_url ?? null,
       },
     })),
+    is_festival: row.is_festival,
     vibes: row.vibes ?? [],
   };
 }
@@ -52,7 +54,8 @@ export function useEvents(
   marketSlug: string | null,
   timeframe: Timeframe,
   // 'other' is the ungenred catch-all handled by get_filtered_events (0011).
-  vibe: Genre | 'other' | null
+  vibe: Genre | 'other' | null,
+  festivalsOnly = false
 ) {
   const [events, setEvents] = useState<EventWithDetails[]>([]);
   const [loading, setLoading] = useState(true);
@@ -74,6 +77,7 @@ export function useEvents(
         market_slug: marketSlug,
         timeframe,
         vibe_filter: vibe,
+        festivals_only: festivalsOnly,
       });
 
       if (cancelled) return;
@@ -91,7 +95,7 @@ export function useEvents(
     return () => {
       cancelled = true;
     };
-  }, [marketSlug, timeframe, vibe]);
+  }, [marketSlug, timeframe, vibe, festivalsOnly]);
 
   return { events, loading, error };
 }

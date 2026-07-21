@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
-import { ActivityIndicator, FlatList, Platform, StyleSheet, View } from 'react-native';
+import { ActivityIndicator, FlatList, Platform, StyleSheet, TouchableOpacity, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
 import { Dropdown } from '@/components/dropdown';
@@ -37,6 +37,7 @@ export default function HomeScreen() {
   const [selectedMarketId, setSelectedMarketId] = useState<number | null>(null);
   const [timeframe, setTimeframe] = useState<Timeframe>('all');
   const [genre, setGenre] = useState<Genre | 'all' | 'other'>('all');
+  const [festivalsOnly, setFestivalsOnly] = useState(false);
 
   useEffect(() => {
     if (selectedMarketId !== null || markets.length === 0) return;
@@ -50,7 +51,8 @@ export default function HomeScreen() {
   const { events, loading: eventsLoading, error: eventsError } = useEvents(
     marketSlug,
     timeframe,
-    genre === 'all' ? null : genre
+    genre === 'all' ? null : genre,
+    festivalsOnly
   );
 
   const loading = marketsLoading || (eventsLoading && events.length === 0);
@@ -95,6 +97,22 @@ export default function HomeScreen() {
               onChange={setGenre}
               accessibilityLabel="Filter by genre"
             />
+            {/* Orthogonal to genre/date, so a toggle rather than a 4th dropdown. */}
+            <TouchableOpacity
+              onPress={() => setFestivalsOnly((v) => !v)}
+              accessibilityRole="button"
+              accessibilityState={{ selected: festivalsOnly }}
+              accessibilityLabel="Show festivals only"
+              style={[
+                styles.festivalToggle,
+                festivalsOnly
+                  ? { backgroundColor: '#FFFFFF', borderColor: '#FFFFFF' }
+                  : { backgroundColor: 'transparent', borderColor: 'rgba(255,255,255,0.1)' },
+              ]}>
+              <ThemedText style={[styles.festivalText, { color: festivalsOnly ? '#000000' : undefined }]}>
+                Festivals
+              </ThemedText>
+            </TouchableOpacity>
           </View>
         </ThemedView>
 
@@ -113,9 +131,11 @@ export default function HomeScreen() {
         {!error && !loading && events.length === 0 && (
           <ThemedView style={styles.centered}>
             <ThemedText themeColor="textSecondary" style={styles.emptyText}>
-              {timeframe === 'all' && genre === 'all'
+              {timeframe === 'all' && genre === 'all' && !festivalsOnly
                 ? 'No upcoming events in this market yet.'
-                : 'No events match these filters.'}
+                : festivalsOnly
+                  ? 'No upcoming festivals match these filters.'
+                  : 'No events match these filters.'}
             </ThemedText>
             {genre !== 'all' && (
               <ThemedText type="small" themeColor="textSecondary" style={styles.emptyText}>
@@ -175,6 +195,18 @@ const styles = StyleSheet.create({
     gap: Spacing.two,
     paddingHorizontal: Spacing.three,
     paddingBottom: Spacing.two,
+  },
+  festivalToggle: {
+    paddingHorizontal: Spacing.three - 2,
+    paddingVertical: Spacing.two,
+    borderRadius: 999,
+    borderWidth: 1,
+    justifyContent: 'center',
+  },
+  festivalText: {
+    fontSize: 13,
+    lineHeight: 18,
+    fontWeight: '500',
   },
   centered: {
     flex: 1,

@@ -10,6 +10,9 @@ export type Artist = {
   name: string;
   spotify_url: string | null;
   soundcloud_url: string | null;
+  // The artist's most recent Mixcloud set, when their account resolved.
+  // Null for most artists — the UI falls back to a YouTube search.
+  mixcloud_url?: string | null;
 };
 
 export type LineupSlot = {
@@ -36,6 +39,7 @@ export type EventWithDetails = {
   source_type: string;
   venues: Venue | null;
   lineups: LineupSlot[];
+  is_festival?: boolean;
   // Only the feed carries these — they come from get_filtered_events, not from
   // the plain event select the detail screen uses.
   vibes?: Genre[];
@@ -85,6 +89,7 @@ export type FilteredEventRow = {
   source_type: string;
   venue_name: string | null;
   venue_city: string | null;
+  is_festival: boolean;
   vibes: Genre[] | null;
   artists: (Artist & { performance_order: number | null })[] | null;
 };

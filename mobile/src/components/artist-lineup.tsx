@@ -9,7 +9,8 @@ import { Artist } from '@/lib/types';
 
 const VIBE_ACCENT = '#FF3B7F';
 const SPOTIFY_GREEN = '#1DB954';
-const SOUNDCLOUD_ORANGE = '#FF5500';
+const MIXCLOUD_BLUE = '#5000FF';
+const YOUTUBE_RED = '#FF0033';
 const ICON = 14;
 
 function IconLink({ url, icon, color }: { url: string; icon: 'spotify' | 'soundcloud'; color: string }) {
@@ -20,6 +21,38 @@ function IconLink({ url, icon, color }: { url: string; icon: 'spotify' | 'soundc
       accessibilityRole="link"
       accessibilityLabel={`Open ${icon} profile`}>
       <FontAwesome5 name={icon} size={ICON} color={color} />
+    </TouchableOpacity>
+  );
+}
+
+// "Hear a recent set" — the thing the SoundCloud icon was always meant to be.
+// It never could be: soundcloud_url is a synthesized search link, because
+// SoundCloud's API has been closed to new registrations for years.
+//
+// Two tiers. If the enrichment resolved the artist's own Mixcloud account we
+// link their latest set directly. Otherwise we open a YouTube search for
+// "<artist> live set" — labelled as a search, so it stops promising a profile
+// and delivering a results page.
+function LiveSetLink({ artist }: { artist: Artist }) {
+  const hasSet = !!artist.mixcloud_url;
+
+  const url = hasSet
+    ? artist.mixcloud_url!
+    : `https://www.youtube.com/results?search_query=${encodeURIComponent(`${artist.name} live set`)}`;
+
+  return (
+    <TouchableOpacity
+      onPress={() => Linking.openURL(url)}
+      hitSlop={10}
+      accessibilityRole="link"
+      accessibilityLabel={hasSet ? `Latest set by ${artist.name}` : `Search live sets for ${artist.name}`}>
+      <FontAwesome5
+        name={hasSet ? 'mixcloud' : 'youtube'}
+        size={ICON}
+        color={hasSet ? MIXCLOUD_BLUE : YOUTUBE_RED}
+        // A search is a weaker promise than a real set, so it reads quieter.
+        style={hasSet ? undefined : styles.searchIcon}
+      />
     </TouchableOpacity>
   );
 }
@@ -109,9 +142,7 @@ export function ArtistLineup({
             {artist.spotify_url && (
               <IconLink url={artist.spotify_url} icon="spotify" color={SPOTIFY_GREEN} />
             )}
-            {artist.soundcloud_url && (
-              <IconLink url={artist.soundcloud_url} icon="soundcloud" color={SOUNDCLOUD_ORANGE} />
-            )}
+            <LiveSetLink artist={artist} />
           </View>
         </View>
       ))}
@@ -163,5 +194,8 @@ const styles = StyleSheet.create({
   },
   mutedIcon: {
     opacity: 0.4,
+  },
+  searchIcon: {
+    opacity: 0.55,
   },
 });
