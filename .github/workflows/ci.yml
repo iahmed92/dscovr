@@ -31,6 +31,10 @@ jobs:
         working-directory: mobile
         run: npm install
 
+      - name: Share-link unit test
+        working-directory: mobile
+        run: npm run test:share
+
       - name: Spotify taste-mapping unit test
         working-directory: mobile
         run: npm run test:taste

@@ -45,7 +45,8 @@
     "ios": "expo start --ios",
     "web": "expo start --web",
     "lint": "expo lint",
-    "test:taste": "node --experimental-strip-types src/lib/spotify-taste.test.mts"
+    "test:taste": "node --experimental-strip-types src/lib/spotify-taste.test.mts",
+    "test:share": "node --experimental-strip-types src/lib/share-links.test.mts"
   },
   "private": true
 }
