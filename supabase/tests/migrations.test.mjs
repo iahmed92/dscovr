@@ -407,6 +407,16 @@ check('artists JSON now carries mixcloud_url',
   'mixcloud_url' in ((await db.query(
     `SELECT artists FROM get_filtered_events('test-market','all',null,false) WHERE title='Tonight Techno'`)).rows[0].artists[0] ?? {}));
 
+console.log('\n--- 0015: promoters readable, billing fields withheld ---');
+await db.query(`INSERT INTO promoters (name, website, stripe_customer_id)
+  VALUES ('Test Promoter', 'https://x.test', 'cus_secret123')`);
+const promoRead = await asRole('anon', `SELECT id, name, is_verified FROM promoters LIMIT 1`);
+check('anon can now read promoter names', promoRead.ok, promoRead.err ?? '');
+const promoBilling = await asRole('anon', `SELECT stripe_customer_id FROM promoters LIMIT 1`);
+check('anon CANNOT read stripe_customer_id', !promoBilling.ok, promoBilling.ok ? 'LEAKED' : '');
+const promoStar = await asRole('anon', `SELECT * FROM promoters LIMIT 1`);
+check('anon SELECT * on promoters fails closed', !promoStar.ok, promoStar.ok ? 'LEAKED' : '');
+
 console.log('\n--- 0014: ticket click tracking ---');
 await db.exec(`SELECT set_config('test.uid', '${u1}', false)`);
 
