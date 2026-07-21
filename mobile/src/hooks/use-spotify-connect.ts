@@ -7,6 +7,7 @@ import {
   SPOTIFY_CLIENT_ID,
   SPOTIFY_DISCOVERY,
   SPOTIFY_SCOPES,
+  canUsePKCE,
   spotifyRedirectUri,
 } from '@/lib/spotify-auth';
 import { buildTasteProfile, normalizeArtistName, SpotifyArtist } from '@/lib/spotify-taste';
@@ -30,6 +31,12 @@ export function useSpotifyConnect() {
 
   const redirectUri = spotifyRedirectUri();
 
+  // Insecure origins have no WebCrypto, so the PKCE challenge can't be hashed.
+  // Passing a null discovery is what stops useAuthRequest building the request
+  // at all — it hashes eagerly during render, so merely not *calling* connect()
+  // is too late and the screen crashes on load.
+  const pkceAvailable = canUsePKCE();
+
   const [request, response, promptAsync] = useAuthRequest(
     {
       clientId: SPOTIFY_CLIENT_ID ?? '',
@@ -37,7 +44,7 @@ export function useSpotifyConnect() {
       usePKCE: true,
       redirectUri,
     },
-    SPOTIFY_DISCOVERY
+    pkceAvailable ? SPOTIFY_DISCOVERY : null
   );
 
   useEffect(() => {
@@ -96,6 +103,13 @@ export function useSpotifyConnect() {
   }, [response, request, userId]);
 
   async function connect() {
+    if (!pkceAvailable) {
+      setStatus('error');
+      setError(
+        'Spotify sign-in needs a secure connection (https). Open the site over https, or use localhost on this machine.'
+      );
+      return;
+    }
     if (!SPOTIFY_CLIENT_ID) {
       setStatus('error');
       setError('Spotify is not configured (missing EXPO_PUBLIC_SPOTIFY_CLIENT_ID).');
@@ -106,7 +120,7 @@ export function useSpotifyConnect() {
     await promptAsync();
   }
 
-  return { connect, status, error, summary, redirectUri, ready: !!request };
+  return { connect, status, error, summary, redirectUri, ready: !!request, pkceAvailable };
 }
 
 async function fetchTopArtists(accessToken: string): Promise<SpotifyArtist[]> {

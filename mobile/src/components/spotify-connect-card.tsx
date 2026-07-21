@@ -17,7 +17,7 @@ const SPOTIFY_GREEN = '#1DB954';
 // until a dedicated flag is worth a migration.
 export function SpotifyConnectCard() {
   const { userId } = useAuth();
-  const { connect, status, error, summary } = useSpotifyConnect();
+  const { connect, status, error, summary, pkceAvailable } = useSpotifyConnect();
   const [favArtists, setFavArtists] = useState<number | null>(null);
 
   const refreshCounts = useCallback(async () => {
@@ -49,20 +49,25 @@ export function SpotifyConnectCard() {
         <View style={styles.textCol}>
           <ThemedText type="default">Spotify</ThemedText>
           <ThemedText type="small" themeColor="textSecondary">
-            {connected
-              ? summary
-                ? `Imported ${summary.artists} artists · ${summary.genres} genres`
-                : 'Connected — powering your picks'
-              : 'Connect to tune your recommendations'}
+            {!pkceAvailable
+              ? 'Needs a secure (https) connection'
+              : connected
+                ? summary
+                  ? `Imported ${summary.artists} artists · ${summary.genres} genres`
+                  : 'Connected — powering your picks'
+                : 'Connect to tune your recommendations'}
           </ThemedText>
         </View>
 
         <TouchableOpacity
           onPress={connect}
-          disabled={busy}
+          disabled={busy || !pkceAvailable}
           accessibilityRole="button"
           accessibilityLabel={connected ? 'Refresh Spotify taste' : 'Connect Spotify'}
-          style={[styles.button, { backgroundColor: SPOTIFY_GREEN, opacity: busy ? 0.6 : 1 }]}>
+          style={[
+            styles.button,
+            { backgroundColor: SPOTIFY_GREEN, opacity: busy || !pkceAvailable ? 0.4 : 1 },
+          ]}>
           {busy ? (
             <ActivityIndicator color="#fff" size="small" />
           ) : (
