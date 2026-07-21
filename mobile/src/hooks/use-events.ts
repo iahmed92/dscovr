@@ -46,6 +46,8 @@ function toEventWithDetails(row: FilteredEventRow): EventWithDetails {
       },
     })),
     is_festival: row.is_festival,
+    is_featured: row.is_featured,
+    promoter_name: row.promoter_name,
     vibes: row.vibes ?? [],
   };
 }

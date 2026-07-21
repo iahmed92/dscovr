@@ -112,7 +112,7 @@ export default function AccountScreen() {
                 <>
                   {upcoming.length > 0 && (
                     <View style={styles.section}>
-                      <ThemedText type="smallBold" themeColor="textSecondary">
+                      <ThemedText style={styles.sectionLabel} themeColor="textSecondary">
                         UPCOMING
                       </ThemedText>
                       {upcoming.map((show) => (
@@ -123,7 +123,7 @@ export default function AccountScreen() {
 
                   {past.length > 0 && (
                     <View style={styles.section}>
-                      <ThemedText type="smallBold" themeColor="textSecondary">
+                      <ThemedText style={styles.sectionLabel} themeColor="textSecondary">
                         RAVE RESUME
                       </ThemedText>
                       {past.map((show) => (
@@ -167,8 +167,15 @@ const styles = StyleSheet.create({
     paddingTop: Spacing.six,
   },
   heading: {
-    fontSize: 32,
-    lineHeight: 40,
+    fontSize: 24,
+    lineHeight: 29,
+    fontWeight: '600',
+  },
+  sectionLabel: {
+    fontSize: 11,
+    lineHeight: 15,
+    fontWeight: '700',
+    letterSpacing: 0.5,
   },
   card: {
     padding: Spacing.three,

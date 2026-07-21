@@ -86,7 +86,7 @@ export default function EventDetailScreen() {
                 {event.doors_time ? ` · ${formatEventTime(event.doors_time)}` : ''}
               </ThemedText>
               <ThemedText style={[styles.meta, { color: theme.textSecondary }]}>
-                {sourceLabel(event.source_type)}
+                {event.promoters?.name ?? sourceLabel(event.source_type)}
               </ThemedText>
             </View>
 

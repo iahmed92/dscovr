@@ -91,7 +91,7 @@ export default function FriendsScreen() {
             <>
               {requests.length > 0 && (
                 <View style={styles.section}>
-                  <ThemedText type="smallBold" themeColor="textSecondary">
+                  <ThemedText style={styles.sectionLabel} themeColor="textSecondary">
                     REQUESTS
                   </ThemedText>
                   {requests.map((req) => (
@@ -122,7 +122,7 @@ export default function FriendsScreen() {
               )}
 
               <View style={styles.section}>
-                <ThemedText type="smallBold" themeColor="textSecondary">
+                <ThemedText style={styles.sectionLabel} themeColor="textSecondary">
                   FRIENDS
                 </ThemedText>
                 {friends.length === 0 ? (
@@ -195,6 +195,12 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
     minWidth: 64,
+  },
+  sectionLabel: {
+    fontSize: 11,
+    lineHeight: 15,
+    fontWeight: '700',
+    letterSpacing: 0.5,
   },
   section: {
     gap: Spacing.three,

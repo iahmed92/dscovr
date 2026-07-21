@@ -38,8 +38,11 @@ export type EventWithDetails = {
   flyer_url: string | null;
   source_type: string;
   venues: Venue | null;
+  promoters?: { name: string } | null;
   lineups: LineupSlot[];
   is_festival?: boolean;
+  is_featured?: boolean;
+  promoter_name?: string | null;
   // Only the feed carries these — they come from get_filtered_events, not from
   // the plain event select the detail screen uses.
   vibes?: Genre[];
@@ -90,6 +93,8 @@ export type FilteredEventRow = {
   venue_name: string | null;
   venue_city: string | null;
   is_festival: boolean;
+  is_featured: boolean;
+  promoter_name: string | null;
   vibes: Genre[] | null;
   artists: (Artist & { performance_order: number | null })[] | null;
 };

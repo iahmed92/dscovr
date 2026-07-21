@@ -35,6 +35,9 @@ export function EventCard({ event }: { event: EventWithDetails }) {
           { backgroundColor: theme.backgroundElement, borderColor: theme.border },
         ])}>
         <View style={styles.text}>
+          {event.is_featured && (
+            <ThemedText style={styles.featured}>FEATURED</ThemedText>
+          )}
           {time && (
             <ThemedText style={[styles.time, { color: theme.textSecondary }]}>{time}</ThemedText>
           )}
@@ -82,6 +85,14 @@ const styles = StyleSheet.create({
     gap: 3,
   },
   // Tight ramp: weight and color carry the hierarchy, not size jumps.
+  // Labelled, not disguised: a promoted slot says so.
+  featured: {
+    fontSize: 10,
+    lineHeight: 14,
+    fontWeight: '700',
+    letterSpacing: 0.6,
+    color: '#FF3B7F',
+  },
   time: {
     fontSize: 13,
     lineHeight: 17,

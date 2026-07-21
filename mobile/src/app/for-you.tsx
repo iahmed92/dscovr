@@ -108,8 +108,9 @@ const styles = StyleSheet.create({
     paddingTop: Spacing.six,
   },
   heading: {
-    fontSize: 32,
-    lineHeight: 40,
+    fontSize: 24,
+    lineHeight: 29,
+    fontWeight: '600',
     paddingHorizontal: Spacing.three,
   },
   filters: {

@@ -407,6 +407,37 @@ check('artists JSON now carries mixcloud_url',
   'mixcloud_url' in ((await db.query(
     `SELECT artists FROM get_filtered_events('test-market','all',null,false) WHERE title='Tonight Techno'`)).rows[0].artists[0] ?? {}));
 
+console.log('\n--- 0016: featured placement + promoter attribution ---');
+// A featured show later the same day must outrank an earlier unfeatured one,
+// but must NOT jump ahead of an earlier day.
+const promoId = (await db.query(
+  `INSERT INTO promoters (name) VALUES ('Bass Promotions') RETURNING id`)).rows[0].id;
+await db.query(
+  `INSERT INTO events (venue_id, title, event_date, doors_time, is_featured, promoter_id)
+   VALUES ($1, 'Paid Placement', $2, '23:30', true, $3)`,
+  [venueId, plus(0), promoId]);
+
+const dayOne = (await db.query(
+  `SELECT title, is_featured, promoter_name FROM get_filtered_events('test-market','all',null,false)
+   WHERE event_date = $1`, [plus(0)])).rows;
+check('featured event sorts first within its day',
+  dayOne[0]?.title === 'Paid Placement', JSON.stringify(dayOne.map((r) => r.title)));
+check('is_featured is exposed on the row', dayOne[0]?.is_featured === true);
+check('promoter_name is exposed', dayOne[0]?.promoter_name === 'Bass Promotions', JSON.stringify(dayOne[0]));
+
+const wholeFeed = (await db.query(
+  `SELECT title, event_date FROM get_filtered_events('test-market','all',null,false)`)).rows;
+// Compare as timestamps: String(Date) gives "Mon Jul 20 …", which sorts
+// alphabetically by weekday and would call a correct order broken.
+const dates = wholeFeed.map((r) => new Date(r.event_date).getTime());
+check('featured does NOT jump the calendar — dates stay ascending',
+  dates.every((d, i) => i === 0 || dates[i - 1] <= d),
+  JSON.stringify(wholeFeed.slice(0, 6).map((r) => new Date(r.event_date).toISOString().slice(0, 10))));
+check('unfeatured events still carry is_featured=false',
+  wholeFeed.length > 1 && (await db.query(
+    `SELECT is_featured FROM get_filtered_events('test-market','all',null,false)
+     WHERE title = 'Tonight Techno'`)).rows[0].is_featured === false);
+
 console.log('\n--- 0015: promoters readable, billing fields withheld ---');
 await db.query(`INSERT INTO promoters (name, website, stripe_customer_id)
   VALUES ('Test Promoter', 'https://x.test', 'cus_secret123')`);
