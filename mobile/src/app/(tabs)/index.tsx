@@ -11,9 +11,9 @@ import { useEvents } from '@/hooks/use-events';
 import { useFriendsGoingBatch } from '@/hooks/use-friends-going-batch';
 import { useMarkets } from '@/hooks/use-markets';
 import { stateName } from '@/lib/states';
+import { timeframeLabel } from '@/lib/timeframe';
 import {
   TIMEFRAMES,
-  TIMEFRAME_LABELS,
   Timeframe,
   GENRES,
   GENRE_LABELS,
@@ -22,7 +22,9 @@ import {
 
 const DEFAULT_MARKET_SLUG = 'phoenix-tucson';
 
-const TIMEFRAME_OPTIONS = TIMEFRAMES.map((value) => ({ value, label: TIMEFRAME_LABELS[value] }));
+// Labels carry the actual dates each window covers (see timeframeLabel), so the
+// filter isn't a guessing game. Computed once per mount off today's date.
+const TIMEFRAME_OPTIONS = TIMEFRAMES.map((value) => ({ value, label: timeframeLabel(value) }));
 // 'all' is a first-class option rather than a deselect: roughly half of events
 // carry no genre at all (genre_tags only exist where Spotify matched), so a
 // genre filter always hides a large chunk of the feed and needs an obvious way out.
