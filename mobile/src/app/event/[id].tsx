@@ -8,6 +8,7 @@ import { AttendanceButton } from '@/components/attendance-button';
 import { FriendsGoing } from '@/components/friends-going';
 import { InviteCrewButton } from '@/components/invite-crew-button';
 import { InviterBanner } from '@/components/inviter-banner';
+import { VipInquiryButton } from '@/components/vip-inquiry-button';
 import { ThemedText } from '@/components/themed-text';
 import { ThemedView } from '@/components/themed-view';
 import { MaxContentWidth, Spacing } from '@/constants/theme';
@@ -143,6 +144,10 @@ export default function EventDetailScreen() {
                   </ThemedText>
                 </TouchableOpacity>
               )}
+
+              {/* Understated, below tickets: most people want a ticket, not a
+                  table — but the ones who want a table are the revenue. */}
+              <VipInquiryButton eventId={event.id} />
             </View>
 
             {artists.length > 0 && (
