@@ -10,12 +10,20 @@ them. Repo root is the pipeline; `mobile/` is a separate npm project.
 | --- | --- |
 | `DSCOVR.js` | Ticketmaster ingestion, loops every active `markets` row |
 | `relentless-beats-scraper.js` | Relentless Beats scraper (cheerio) |
+| `resident-advisor-scraper.js` | Resident Advisor ingestion via ra.co GraphQL, per-market by area id |
 | `spotify-vibe-check.js` | Enrichment: backfills spotify/deezer ids + genre_tags |
 | `supabase/migrations/` | Schema, numbered `NNNN_*.sql` |
 | `supabase/functions/vibecheck/` | Edge function, resolves preview audio on demand |
 | `mobile/` | Expo Router app |
 
-Scripts: `npm run sync:ticketmaster`, `sync:spotify`, `scrape:relentlessbeats`.
+Scripts: `npm run sync:ticketmaster`, `sync:spotify`, `scrape:relentlessbeats`,
+`scrape:ra` (Resident Advisor — optional `<market-slug>` arg limits to one).
+
+RA is the underground/independent-promoter source Ticketmaster misses. ra.co's
+HTML is Cloudflare-gated, but its GraphQL endpoint answers directly; the scraper
+maps each market to an RA "area" id (`RA_AREA_BY_MARKET`) and pages its
+`eventListings`. Adding a market is one line. RA returns naive local datetimes,
+so — like the rest of the pipeline — parse the parts by hand, never via `Date`.
 
 ## The pipeline is two-stage
 

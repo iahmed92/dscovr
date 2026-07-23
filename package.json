@@ -9,6 +9,7 @@
     "sync:ticketmaster": "node DSCOVR.js",
     "sync:spotify": "node spotify-vibe-check.js",
     "scrape:relentlessbeats": "node relentless-beats-scraper.js",
+    "scrape:ra": "node resident-advisor-scraper.js",
     "sync:mixcloud": "node mixcloud-sets.js"
   },
   "keywords": [],
