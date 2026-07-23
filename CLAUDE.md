@@ -11,6 +11,7 @@ them. Repo root is the pipeline; `mobile/` is a separate npm project.
 | `DSCOVR.js` | Ticketmaster ingestion, loops every active `markets` row |
 | `relentless-beats-scraper.js` | Relentless Beats scraper (cheerio) |
 | `resident-advisor-scraper.js` | Resident Advisor ingestion via ra.co GraphQL, per-market by area id |
+| `insomniac-scraper.js` | Insomniac ingestion — listing → per-event schema.org JSON-LD |
 | `spotify-vibe-check.js` | Enrichment: backfills spotify/deezer ids + genre_tags |
 | `supabase/migrations/` | Schema, numbered `NNNN_*.sql` |
 | `supabase/functions/vibecheck/` | Edge function, resolves preview audio on demand |
@@ -24,6 +25,16 @@ HTML is Cloudflare-gated, but its GraphQL endpoint answers directly; the scraper
 maps each market to an RA "area" id (`RA_AREA_BY_MARKET`) and pages its
 `eventListings`. Adding a market is one line. RA returns naive local datetimes,
 so — like the rest of the pipeline — parse the parts by hand, never via `Date`.
+
+Insomniac is the big-promoter source (festivals + Factory 93 / Day Trip club
+nights) that mostly sells off Ticketmaster. Its /events archive is Cloudflare-
+gated but server-rendered; each card links to an insomniac.com/events/{slug}
+detail page whose slug carries the local date + city and which embeds a
+schema.org MusicEvent JSON-LD (real venue/time/lineup) — same shape as the RB
+scraper. `CITY_TO_MARKET` maps its cities (suburbs fold into the metro). Known
+gap: a few marquee festivals link to their own ticketing domains (no
+insomniac.com detail page), so they're skipped — revisit with card-level parsing
+if a coverage gap shows up.
 
 ## The pipeline is two-stage
 

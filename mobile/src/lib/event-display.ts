@@ -4,6 +4,7 @@ const SOURCE_LABEL: Record<string, string> = {
   ticketmaster: 'Ticketmaster',
   relentless_beats: 'Relentless Beats',
   resident_advisor: 'Resident Advisor',
+  insomniac: 'Insomniac',
   curated: 'Curated',
 };
 
