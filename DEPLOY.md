@@ -47,9 +47,57 @@ exact string to the Spotify app's Redirect URIs (Settings → Redirect URIs → 
 A real HTTPS origin retires the local `127.0.0.1` workaround — no code change,
 the redirect URI is computed at runtime.
 
-## 5. Still pending
+## 5. Transactional email (custom SMTP) — do before real launch
 
-- **Migration 0010** (friends) isn't applied yet: `npx supabase db push`.
+Sign-up uses Supabase Auth, which emails a confirmation link. Out of the box
+that goes through **Supabase's built-in email sender, which is capped at ~2–4
+emails per hour across the whole project** and is labelled "for testing only."
+It is shared, not per-user, so a couple of testers exhaust it and the next
+person sees **"email rate limit exceeded."** This is config, not code — the
+`signUp` call needs no change.
+
+The fix is to point Supabase Auth at a real email provider over SMTP. Resend's
+free tier (3,000/month, 100/day) is enough to launch on.
+
+1. **Resend account + domain.** Sign up at resend.com → **Domains → Add
+   Domain → `dscovr.live`**. Resend shows an **MX**, an **SPF** (TXT) and a
+   **DKIM** (TXT) record, generated per-domain.
+2. **Add those DNS records** wherever `dscovr.live`'s DNS lives — the same
+   place as the records in step 3 above (Vercel → Domains if the nameservers
+   point at Vercel, otherwise the registrar). Then hit **Verify** in Resend.
+   Sending from your own domain is what keeps the mail out of spam; the
+   default Supabase sender gets filtered.
+3. **API key.** Resend → **API Keys → Create**, copy the `re_…` value — it's
+   the SMTP password.
+4. **Supabase → Authentication → Emails → SMTP Settings**, enable custom SMTP:
+
+   | Field | Value |
+   | --- | --- |
+   | Host | `smtp.resend.com` |
+   | Port | `465` |
+   | Username | `resend` |
+   | Password | the `re_…` API key |
+   | Sender email | `no-reply@dscovr.live` |
+   | Sender name | `DSCOVR` |
+
+5. **Raise the limit.** Authentication → Rate Limits → bump **email** up from
+   the default ~4/hr (a few hundred/hr is safe once real SMTP is behind it).
+
+The DKIM/domain verification in step 2 is the step that usually stalls —
+almost always because the records went to the wrong DNS host (registrar vs.
+Vercel). A failed sign-up can also leave a half-created unconfirmed user;
+delete it under **Authentication → Users** if the email later reads as taken.
+
+Alternative for testing only: **Authentication → Providers → Email → turn off
+"Confirm email."** Sign-up then returns a session with no email sent, so the
+limit can't be hit — but anyone can register an address they don't own, so
+re-enable it (with SMTP configured) before launch.
+
+## 6. Still pending
+
+- Nothing blocking: migrations are applied through **0018** as of this writing
+  (`npx supabase migration list` shows local/remote parity). Re-check after
+  writing any new migration.
 
 ## Notes
 
