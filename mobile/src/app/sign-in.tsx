@@ -16,6 +16,8 @@ import { ThemedView } from '@/components/themed-view';
 import { MaxContentWidth, Spacing } from '@/constants/theme';
 import { useAuth } from '@/hooks/use-auth';
 import { useTheme } from '@/hooks/use-theme';
+import { supabase } from '@/lib/supabase';
+import { validateUsername } from '@/lib/username';
 
 type Mode = 'sign_in' | 'sign_up';
 
@@ -26,6 +28,7 @@ export default function SignInScreen() {
 
   const [mode, setMode] = useState<Mode>('sign_in');
   const [email, setEmail] = useState('');
+  const [username, setUsername] = useState('');
   const [password, setPassword] = useState('');
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -40,12 +43,38 @@ export default function SignInScreen() {
       return;
     }
 
+    // Username is user-chosen at sign-up, never derived from the email.
+    if (isSignUp) {
+      const formatError = validateUsername(username);
+      if (formatError) {
+        setError(formatError);
+        return;
+      }
+    }
+
     setSubmitting(true);
     setError(null);
     setNotice(null);
 
+    // Check availability up front so the person gets "that's taken" instead of
+    // silently being uniquified to `name1` by the provisioning trigger. Not a
+    // hard guarantee against a race — the DB's UNIQUE constraint is the real
+    // backstop — but it's the right message almost always.
+    if (isSignUp) {
+      const { data: taken } = await supabase
+        .from('profiles')
+        .select('id')
+        .eq('username', username.trim())
+        .maybeSingle();
+      if (taken) {
+        setSubmitting(false);
+        setError('That username is taken — try another.');
+        return;
+      }
+    }
+
     const { error: authError } = isSignUp
-      ? await signUp(trimmedEmail, password)
+      ? await signUp(trimmedEmail, password, username)
       : await signIn(trimmedEmail, password);
 
     setSubmitting(false);
@@ -85,6 +114,19 @@ export default function SignInScreen() {
             </ThemedText>
 
             <View style={styles.fields}>
+              {isSignUp && (
+                <TextInput
+                  value={username}
+                  onChangeText={setUsername}
+                  placeholder="Username"
+                  placeholderTextColor={theme.textSecondary}
+                  autoCapitalize="none"
+                  autoCorrect={false}
+                  autoComplete="username-new"
+                  maxLength={20}
+                  style={[styles.input, { color: theme.text, backgroundColor: theme.backgroundElement }]}
+                />
+              )}
               <TextInput
                 value={email}
                 onChangeText={setEmail}
@@ -138,6 +180,7 @@ export default function SignInScreen() {
                 setMode(isSignUp ? 'sign_in' : 'sign_up');
                 setError(null);
                 setNotice(null);
+                setUsername('');
               }}
               style={styles.switchMode}>
               <ThemedText type="small" themeColor="textSecondary">
