@@ -35,6 +35,10 @@ jobs:
         working-directory: mobile
         run: npm run test:share
 
+      - name: Spotify retry-policy unit test
+        working-directory: mobile
+        run: npm run test:retry
+
       - name: Spotify taste-mapping unit test
         working-directory: mobile
         run: npm run test:taste

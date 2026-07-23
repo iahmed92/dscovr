@@ -10,6 +10,7 @@ import {
   canUsePKCE,
   spotifyRedirectUri,
 } from '@/lib/spotify-auth';
+import { retryDelayMs, spotifyErrorMessage } from '@/lib/spotify-retry';
 import { buildTasteProfile, normalizeArtistName, SpotifyArtist } from '@/lib/spotify-taste';
 import { supabase } from '@/lib/supabase';
 
@@ -123,11 +124,23 @@ export function useSpotifyConnect() {
   return { connect, status, error, summary, redirectUri, ready: !!request, pkceAvailable };
 }
 
+const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
+
 async function fetchTopArtists(accessToken: string): Promise<SpotifyArtist[]> {
-  const res = await fetch('https://api.spotify.com/v1/me/top/artists?limit=50&time_range=medium_term', {
-    headers: { Authorization: `Bearer ${accessToken}` },
-  });
-  if (!res.ok) throw new Error(`Spotify top artists failed (${res.status})`);
+  // Retry on 429/5xx so an onboarding spike (many people connecting at once,
+  // tripping the per-app rate limit) recovers instead of erroring. A bad token
+  // or other 4xx fails fast — retrying it just wastes the user's time.
+  let res: Response;
+  for (let attempt = 1; ; attempt++) {
+    res = await fetch('https://api.spotify.com/v1/me/top/artists?limit=50&time_range=medium_term', {
+      headers: { Authorization: `Bearer ${accessToken}` },
+    });
+    if (res.ok) break;
+    const delay = retryDelayMs(res.status, res.headers.get('Retry-After'), attempt);
+    if (delay === null) throw new Error(spotifyErrorMessage(res.status));
+    await sleep(delay);
+  }
+
   const data = await res.json();
   return (data.items ?? []).map((a: { id: string; name: string; genres?: string[] }) => ({
     id: a.id,
