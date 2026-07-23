@@ -10,6 +10,7 @@
     "sync:spotify": "node spotify-vibe-check.js",
     "scrape:relentlessbeats": "node relentless-beats-scraper.js",
     "scrape:ra": "node resident-advisor-scraper.js",
+    "scrape:insomniac": "node insomniac-scraper.js",
     "sync:mixcloud": "node mixcloud-sets.js"
   },
   "keywords": [],
