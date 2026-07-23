@@ -40,12 +40,17 @@ registrar. Propagation + auto HTTPS take a few minutes.
 
 ## 4. Register the production Spotify redirect
 
-Once the site is at `https://dscovr.live`, the app derives its OAuth redirect
-from the origin, so it will send `https://dscovr.live/spotify-callback`. Add that
-exact string to the Spotify app's Redirect URIs (Settings → Redirect URIs → Save).
+The app derives its OAuth redirect from the origin it is *actually served on*.
+The apex `dscovr.live` 308-redirects to `www.dscovr.live`, so the app always
+runs on www and sends **`https://www.dscovr.live/spotify-callback`** — note the
+`www`. Add that exact string to the Spotify app's Redirect URIs (Settings →
+Redirect URIs → Save). Registering the apex (`https://dscovr.live/...`) instead
+is the classic cause of "redirect URI does not match configuration" — Spotify
+requires an exact string match, and `www` ≠ apex.
 
 A real HTTPS origin retires the local `127.0.0.1` workaround — no code change,
-the redirect URI is computed at runtime.
+the redirect URI is computed at runtime. Keep the `127.0.0.1` entry for local
+dev; add the tunnel URL too if testing Spotify on a device over a tunnel.
 
 ## 5. Transactional email (custom SMTP) — do before real launch
 
