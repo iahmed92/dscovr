@@ -645,6 +645,29 @@ const demand = (await db.query(`SELECT * FROM promoter_market_demand`)).rows;
 check('cells under 5 users are suppressed (no identifying individuals)',
   demand.every((r) => Number(r.users) >= 5), JSON.stringify(demand));
 
+console.log('\n--- 0019: phone presence ---');
+// alice + bob were given phones in the 0018 block; dave never was.
+await db.exec(`SELECT set_config('test.uid', '${idOf.alice}', false)`);
+const hasPhone = await asRole('authenticated', `SELECT current_user_has_phone() AS v`);
+check('reports true for a user with a phone', hasPhone.ok && hasPhone.rows[0].v === true,
+  JSON.stringify(hasPhone.rows ?? hasPhone.err));
+
+await db.exec(`SELECT set_config('test.uid', '${idOf.dave}', false)`);
+const noPhoneFlag = await asRole('authenticated', `SELECT current_user_has_phone() AS v`);
+check('reports false for a user without one', noPhoneFlag.ok && noPhoneFlag.rows[0].v === false,
+  JSON.stringify(noPhoneFlag.rows ?? noPhoneFlag.err));
+
+// The whole point is that the flag never becomes the number.
+const flagLeak = await asRole('authenticated', `SELECT phone FROM profiles WHERE id = auth.uid()`);
+check('the number itself stays unreadable (flag is not a backdoor)',
+  !flagLeak.ok, flagLeak.ok ? 'LEAKED' : '');
+
+await db.exec(`SELECT set_config('test.uid', '', false)`);
+const anonFlag = await asRole('anon', `SELECT current_user_has_phone() AS v`);
+check('anon gets a plain false, not an error', anonFlag.ok && anonFlag.rows[0].v === false,
+  JSON.stringify(anonFlag.rows ?? anonFlag.err));
+await db.exec(`SELECT set_config('test.uid', '${idOf.alice}', false)`);
+
 console.log(`\n${failures === 0 ? 'ALL PASSED' : failures + ' FAILURE(S)'}`);
 await db.close();
 process.exit(failures ? 1 : 0);
