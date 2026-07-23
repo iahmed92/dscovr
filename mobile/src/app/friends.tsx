@@ -10,6 +10,7 @@ import {
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
+import { FindByPhone } from '@/components/find-by-phone';
 import { ThemedText } from '@/components/themed-text';
 import { ThemedView } from '@/components/themed-view';
 import { MaxContentWidth, Spacing } from '@/constants/theme';
@@ -84,6 +85,8 @@ export default function FriendsScreen() {
               {message}
             </ThemedText>
           )}
+
+          <FindByPhone sendRequest={sendRequest} />
 
           {loading ? (
             <ActivityIndicator style={styles.loader} />
