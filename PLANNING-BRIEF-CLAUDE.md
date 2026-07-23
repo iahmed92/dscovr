@@ -27,6 +27,7 @@ ARCHITECTURE CONSTRAINTS
 - Contacts import + push notifications need the native app; the matching backend already exists
 
 OPEN THINGS TO PLAN (pick one per session)
+- Calendar / custom date-range filter: the timeframe presets now show real dates, but there's no way to pick an arbitrary date/range (e.g. "I'm in town in 2 weeks"). Needs date-range params on get_filtered_events (migration) + a cross-platform date picker (web `<input type="date">` via .web.tsx, native DateTimePicker).
 - Feed ranking/curation: RA now dominates (~2,600 events) — how to balance sources, relevance, and freshness so users see what they care about, not 300 club nights first
 - Insomniac festival-card capture: marquee festivals (HARD Summer, EDC) link to their own ticketing domains with no detail-page JSON-LD, so they're missed — design a card-level parse
 - Cross-source deduplication (natural key is venue + title + date)
