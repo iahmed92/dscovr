@@ -681,13 +681,10 @@ check('events gains source_event_id + last_seen_at', addedCols.rows.length === 2
 check('both are nullable (existing rows must survive Phase A)',
   addedCols.rows.every((r) => r.is_nullable === 'YES'), JSON.stringify(addedCols.rows));
 
-// Phase A must NOT create the unique index — the backfill has to run first, or
-// every pre-existing row (all sharing NULL) would have to be resolved at once.
-const uniqIdx = await db.query(`
-    SELECT indexname FROM pg_indexes
-    WHERE tablename = 'events' AND indexdef ILIKE '%unique%' AND indexdef ILIKE '%source_event_id%'`);
-check('the source-identity unique index is NOT created in Phase A',
-  uniqIdx.rows.length === 0, JSON.stringify(uniqIdx.rows));
+// NB: Phase A deliberately does NOT create the identity index — the backfill has
+// to run first. That ordering can't be asserted here, because the harness
+// applies every migration before any test runs, so by now 0021 has added it.
+// The index's properties are asserted in the 0021 section instead.
 
 // A row with no source id must still be insertable, and two of them must
 // coexist — otherwise Phase A would break ingestion before Phase B can run.
@@ -739,6 +736,58 @@ check('and the stored last_seen_at is untouched',
   new Date(stillOld.rows[0].last_seen_at).getUTCFullYear() === 2020,
   String(stillOld.rows[0].last_seen_at));
 await db.exec(`SELECT set_config('test.uid', '${idOf.alice}', false)`);
+
+console.log('\n--- 0021: source-identity cutover ---');
+
+// The natural key is gone, so two sources may each hold their own row for the
+// same real-world event. This is the cross-source split becoming POSSIBLE — the
+// whole point of the cutover, and previously a unique violation that would have
+// failed the run.
+const twin = await db.query(
+  `INSERT INTO events (venue_id, title, event_date, source_type, source_event_id)
+   VALUES ($1,'Twin Night', CURRENT_DATE + 50, 'resident_advisor','ra-twin'),
+          ($1,'Twin Night', CURRENT_DATE + 50, 'ticketmaster','tm-twin') RETURNING id`,
+  [venueId]);
+check('two sources can hold the same venue+title+date', twin.rows.length === 2,
+  JSON.stringify(twin.rows));
+
+const oldConstraint = await db.query(
+  `SELECT conname FROM pg_constraint WHERE conname = 'unique_venue_title_date'`);
+check('unique_venue_title_date is dropped', oldConstraint.rows.length === 0);
+
+// Not partial: PostgREST's on_conflict takes column names only and cannot
+// restate a predicate, so a partial index would be unusable as an upsert target.
+const idxDef = await db.query(
+  `SELECT indexdef FROM pg_indexes WHERE indexname = 'events_source_identity_uniq'`);
+check('the identity unique index exists', idxDef.rows.length === 1);
+check('and it is NOT partial (usable as a PostgREST on_conflict target)',
+  idxDef.rows.length === 1 && !/where/i.test(idxDef.rows[0].indexdef),
+  idxDef.rows[0]?.indexdef ?? 'missing');
+
+let identityDupBlocked = false;
+try {
+  await db.query(
+    `INSERT INTO events (venue_id, title, event_date, source_type, source_event_id)
+     VALUES ($1,'Different Title', CURRENT_DATE + 51, 'resident_advisor','ra-twin')`, [venueId]);
+} catch { identityDupBlocked = true; }
+check('a repeated (source_type, source_event_id) is rejected', identityDupBlocked);
+
+// Every one of the ~4,400 pre-reconciliation rows carries NULL here. If NULLs
+// collided, creating this index would have failed outright — so this is the
+// assertion that makes the phased rollout viable at all.
+const nulls = await db.query(
+  `INSERT INTO events (venue_id, title, event_date, source_type, source_event_id)
+   VALUES ($1,'Unreconciled A', CURRENT_DATE + 52, 'ticketmaster', NULL),
+          ($1,'Unreconciled B', CURRENT_DATE + 52, 'ticketmaster', NULL) RETURNING id`,
+  [venueId]);
+check('rows sharing a source_type with NULL ids still coexist', nulls.rows.length === 2);
+
+const venueDateIdx = await db.query(
+  `SELECT indexdef FROM pg_indexes WHERE indexname = 'events_venue_date_idx'`);
+check('the (venue_id, event_date) blocking-key index exists', venueDateIdx.rows.length === 1);
+check('and it is non-unique (venue+date collisions are legal now)',
+  venueDateIdx.rows.length === 1 && !/unique/i.test(venueDateIdx.rows[0].indexdef),
+  venueDateIdx.rows[0]?.indexdef ?? 'missing');
 
 console.log(`\n${failures === 0 ? 'ALL PASSED' : failures + ' FAILURE(S)'}`);
 await db.close();
