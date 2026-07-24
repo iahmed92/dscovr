@@ -11,6 +11,7 @@
     "scrape:relentlessbeats": "node relentless-beats-scraper.js",
     "scrape:ra": "node resident-advisor-scraper.js",
     "scrape:insomniac": "node insomniac-scraper.js",
+    "report:ingest": "node ingest-report.js",
     "sync:mixcloud": "node mixcloud-sets.js"
   },
   "keywords": [],

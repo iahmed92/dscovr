@@ -16,6 +16,7 @@
 
 import 'dotenv/config';
 import { createClient } from '@supabase/supabase-js';
+import { finishRun, observe, seenNow, sourceIdentity, startRun } from './ingest-telemetry.js';
 
 const { SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY, TICKETMASTER_API_KEY } = process.env;
 
@@ -218,16 +219,27 @@ async function syncEvent(tmEvent, marketId) {
   const tmVenue = tmEvent._embedded?.venues?.[0];
   if (!tmVenue) {
     console.warn(`  Skipping "${tmEvent.name}" — no venue data`);
-    return;
+    return false;
   }
 
   if (!tmEvent.dates?.start?.localDate) {
     console.warn(`  Skipping "${tmEvent.name}" — no event_date`);
-    return;
+    return false;
+  }
+
+  // source_type and source_event_id are written as one pair, never apart:
+  // until the identity index lands, a contested natural key flips between
+  // sources each sync, which is harmless only while the pair stays consistent.
+  const identity = sourceIdentity('ticketmaster', tmEvent.id);
+  if (!identity) {
+    console.warn(`  Skipping "${tmEvent.name}" — no Ticketmaster event id`);
+    return false;
   }
 
   const venueId = await upsertVenue(tmVenue, marketId);
   const promoterId = await getOrCreatePromoter(extractPromoterName(tmEvent));
+
+  observe({ venueId, title: tmEvent.name, eventDate: tmEvent.dates.start.localDate, sourceType: 'ticketmaster' });
 
   const eventRecord = {
     venue_id: venueId,
@@ -239,7 +251,8 @@ async function syncEvent(tmEvent, marketId) {
     doors_time: tmEvent.dates.start.localTime ?? null,
     ticket_url: tmEvent.url ?? null,
     flyer_url: pickFlyerUrl(tmEvent.images),
-    source_type: 'ticketmaster',
+    ...identity,
+    last_seen_at: seenNow(),
   };
 
   const { data: eventRow, error: eventError } = await supabase
@@ -250,7 +263,7 @@ async function syncEvent(tmEvent, marketId) {
 
   if (eventError) {
     console.error(`  Event upsert failed for "${tmEvent.name}": ${eventError.message}`);
-    return;
+    return false;
   }
 
   const attractions = tmEvent._embedded?.attractions ?? [];
@@ -273,6 +286,7 @@ async function syncEvent(tmEvent, marketId) {
   }
 
   console.log(`  Synced: ${tmEvent.name} (${eventRecord.event_date})`);
+  return true;
 }
 
 async function syncMarket(market) {
@@ -289,13 +303,15 @@ async function syncMarket(market) {
     console.log(`  Fetched ${tmEvents.length} events from Ticketmaster.`);
   }
 
+  let seen = 0;
   for (const tmEvent of tmEvents) {
     try {
-      await syncEvent(tmEvent, market.id);
+      if (await syncEvent(tmEvent, market.id)) seen++;
     } catch (err) {
       console.error(`  Error syncing "${tmEvent.name}":`, err.message);
     }
   }
+  return seen;
 }
 
 async function main() {
@@ -303,10 +319,15 @@ async function main() {
   console.log(`Starting Ticketmaster sync for ${markets.length} active market(s): ${markets.map((m) => m.slug).join(', ')}`);
 
   for (const market of markets) {
+    // A run row per (source, market): a market that failed halfway must not be
+    // mistaken later for one that legitimately dropped its events.
+    const runId = await startRun(supabase, 'ticketmaster', market.id);
     try {
-      await syncMarket(market);
+      const seen = await syncMarket(market);
+      await finishRun(supabase, runId, { status: 'complete', eventsSeen: seen });
     } catch (err) {
       console.error(`Fatal error syncing market "${market.slug}":`, err.message);
+      await finishRun(supabase, runId, { status: 'failed', notes: err.message });
     }
     await sleep(REQUEST_DELAY_MS);
   }

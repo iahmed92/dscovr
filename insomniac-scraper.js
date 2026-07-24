@@ -21,6 +21,7 @@
 
 import 'dotenv/config';
 import { createClient } from '@supabase/supabase-js';
+import { finishRun, observe, seenNow, sourceIdentity, startRun } from './ingest-telemetry.js';
 import * as cheerio from 'cheerio';
 
 const { SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY } = process.env;
@@ -205,11 +206,23 @@ function pickTicketUrl(offers, fallback) {
   return offer?.url ?? fallback;
 }
 
+// The slug is Insomniac's stable identity for an event.
+function slugFromUrl(detailUrl) {
+  const parts = detailUrl.split('?')[0].split('/').filter(Boolean);
+  return parts[parts.length - 1] ?? null;
+}
+
 async function syncEvent(detailUrl, eventDate, marketId, promoterId) {
   const musicEvent = await fetchMusicEvent(detailUrl);
   if (!musicEvent || !musicEvent.location || !musicEvent.name) return false;
 
+  // Written as one pair — see ingest-telemetry.sourceIdentity.
+  const identity = sourceIdentity('insomniac', slugFromUrl(detailUrl));
+  if (!identity) return false;
+
   const venueId = await upsertVenue(musicEvent.location, marketId);
+
+  observe({ venueId, title: musicEvent.name, eventDate, sourceType: 'insomniac' });
 
   const record = {
     venue_id: venueId,
@@ -219,7 +232,8 @@ async function syncEvent(detailUrl, eventDate, marketId, promoterId) {
     doors_time: timePartFromStartDate(musicEvent.startDate),
     ticket_url: pickTicketUrl(musicEvent.offers, detailUrl),
     flyer_url: pickFlyer(musicEvent.image),
-    source_type: 'insomniac',
+    ...identity,
+    last_seen_at: seenNow(),
   };
 
   const { data: eventRow, error } = await supabase
@@ -260,6 +274,19 @@ async function main() {
   let synced = 0;
   let skipped = 0;
 
+  // Insomniac's listing is global, so ONE completed run sweeps every mapped
+  // market — which means "absent from this run" is meaningful for each of them,
+  // including markets that legitimately had zero events. So a run row is opened
+  // per market, not one for the source as a whole.
+  const perMarket = new Map();
+  const runIds = new Map();
+  for (const slug of new Set(Object.values(CITY_TO_MARKET))) {
+    if (!marketIds.has(slug)) continue;
+    runIds.set(slug, await startRun(supabase, 'insomniac', marketIds.get(slug)));
+    perMarket.set(slug, 0);
+  }
+
+  try {
   for (const url of detailUrls) {
     const parsed = parseSlug(url);
     if (!parsed) { skipped++; continue; }
@@ -268,11 +295,24 @@ async function main() {
     if (parsed.eventDate < today) { skipped++; continue; } // past
 
     try {
-      if (await syncEvent(url, parsed.eventDate, marketIds.get(marketSlug), promoterId)) synced++;
+      if (await syncEvent(url, parsed.eventDate, marketIds.get(marketSlug), promoterId)) {
+        synced++;
+        perMarket.set(marketSlug, (perMarket.get(marketSlug) ?? 0) + 1);
+      }
     } catch (err) {
       console.error(`Error processing ${url}:`, err.message);
     }
     await sleep(REQUEST_DELAY_MS);
+  }
+  } catch (err) {
+    for (const [slug, runId] of runIds) {
+      await finishRun(supabase, runId, { status: 'failed', notes: err.message });
+    }
+    throw err;
+  }
+
+  for (const [slug, runId] of runIds) {
+    await finishRun(supabase, runId, { status: 'complete', eventsSeen: perMarket.get(slug) ?? 0 });
   }
 
   console.log(`Insomniac scrape complete — ${synced} event(s) synced, ${skipped} skipped (unmapped city or past).`);

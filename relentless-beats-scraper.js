@@ -24,6 +24,7 @@
 
 import 'dotenv/config';
 import { createClient } from '@supabase/supabase-js';
+import { finishRun, observe, seenNow, sourceIdentity, startRun } from './ingest-telemetry.js';
 import * as cheerio from 'cheerio';
 
 const { SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY } = process.env;
@@ -73,7 +74,9 @@ async function discoverEventUrls() {
     seen.set(eventId, new URL(href, EVENTS_URL).toString());
   });
 
-  return [...seen.values()];
+  // The site's own per-event id, kept rather than discarded: it is this
+  // source's stable identity for the row.
+  return [...seen.entries()].map(([eventId, url]) => ({ eventId, url }));
 }
 
 // ---------------------------------------------------------------------------
@@ -204,17 +207,31 @@ function pickTicketUrl(offers) {
 // Main sync
 // ---------------------------------------------------------------------------
 
-async function syncEvent(musicEvent, marketId, promoterId) {
+async function syncEvent(musicEvent, marketId, promoterId, sourceEventId) {
   if (musicEvent.eventStatus?.includes('Cancelled')) {
     console.warn(`Skipping "${musicEvent.name}" — cancelled`);
-    return;
+    return false;
   }
   if (!musicEvent.location || !musicEvent.startDate) {
     console.warn(`Skipping "${musicEvent.name}" — missing venue or start date`);
-    return;
+    return false;
+  }
+
+  // Written as one pair — see ingest-telemetry.sourceIdentity.
+  const identity = sourceIdentity('relentless_beats', sourceEventId);
+  if (!identity) {
+    console.warn(`Skipping "${musicEvent.name}" — no Relentless Beats event id`);
+    return false;
   }
 
   const venueId = await upsertVenue(musicEvent.location, marketId);
+
+  observe({
+    venueId,
+    title: musicEvent.name,
+    eventDate: localDatePart(musicEvent.startDate),
+    sourceType: 'relentless_beats',
+  });
 
   const eventRecord = {
     venue_id: venueId,
@@ -224,7 +241,8 @@ async function syncEvent(musicEvent, marketId, promoterId) {
     doors_time: localTimePart(musicEvent.startDate),
     ticket_url: pickTicketUrl(musicEvent.offers),
     flyer_url: pickFlyerUrl(musicEvent.image),
-    source_type: 'relentless_beats',
+    ...identity,
+    last_seen_at: seenNow(),
   };
 
   const { data: eventRow, error: eventError } = await supabase
@@ -235,7 +253,7 @@ async function syncEvent(musicEvent, marketId, promoterId) {
 
   if (eventError) {
     console.error(`Event upsert failed for "${musicEvent.name}": ${eventError.message}`);
-    return;
+    return false;
   }
 
   const performers = musicEvent.performer ?? [];
@@ -258,6 +276,7 @@ async function syncEvent(musicEvent, marketId, promoterId) {
   }
 
   console.log(`Synced: ${musicEvent.name} (${eventRecord.event_date})`);
+  return true;
 }
 
 async function main() {
@@ -268,21 +287,29 @@ async function main() {
   const eventUrls = await discoverEventUrls();
   console.log(`Found ${eventUrls.length} AZ events on relentlessbeats.com.`);
 
-  for (const url of eventUrls) {
-    try {
-      const musicEvent = await fetchMusicEvent(url);
-      if (!musicEvent) {
-        console.warn(`No MusicEvent JSON-LD found at ${url}`);
-      } else {
-        await syncEvent(musicEvent, marketId, promoterId);
+  const runId = await startRun(supabase, 'relentless_beats', marketId);
+  let seen = 0;
+  try {
+    for (const { eventId, url } of eventUrls) {
+      try {
+        const musicEvent = await fetchMusicEvent(url);
+        if (!musicEvent) {
+          console.warn(`No MusicEvent JSON-LD found at ${url}`);
+        } else if (await syncEvent(musicEvent, marketId, promoterId, eventId)) {
+          seen++;
+        }
+      } catch (err) {
+        console.error(`Error processing ${url}:`, err.message);
       }
-    } catch (err) {
-      console.error(`Error processing ${url}:`, err.message);
+      await sleep(REQUEST_DELAY_MS);
     }
-    await sleep(REQUEST_DELAY_MS);
+    await finishRun(supabase, runId, { status: 'complete', eventsSeen: seen });
+  } catch (err) {
+    await finishRun(supabase, runId, { status: 'failed', notes: err.message });
+    throw err;
   }
 
-  console.log('Relentless Beats scrape complete.');
+  console.log(`Relentless Beats scrape complete — ${seen} event(s).`);
 }
 
 main().catch((err) => {
