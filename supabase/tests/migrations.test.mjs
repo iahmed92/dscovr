@@ -668,6 +668,78 @@ check('anon gets a plain false, not an error', anonFlag.ok && anonFlag.rows[0].v
   JSON.stringify(anonFlag.rows ?? anonFlag.err));
 await db.exec(`SELECT set_config('test.uid', '${idOf.alice}', false)`);
 
+console.log('\n--- 0020: source identity + liveness (Phase A) ---');
+
+// Additive only: the columns must exist and accept NULL, because ~4,400
+// existing rows have no source id until reconciliation fills them.
+const addedCols = await db.query(`
+    SELECT column_name, is_nullable FROM information_schema.columns
+    WHERE table_name = 'events' AND column_name IN ('source_event_id', 'last_seen_at')
+    ORDER BY column_name`);
+check('events gains source_event_id + last_seen_at', addedCols.rows.length === 2,
+  JSON.stringify(addedCols.rows));
+check('both are nullable (existing rows must survive Phase A)',
+  addedCols.rows.every((r) => r.is_nullable === 'YES'), JSON.stringify(addedCols.rows));
+
+// Phase A must NOT create the unique index — the backfill has to run first, or
+// every pre-existing row (all sharing NULL) would have to be resolved at once.
+const uniqIdx = await db.query(`
+    SELECT indexname FROM pg_indexes
+    WHERE tablename = 'events' AND indexdef ILIKE '%unique%' AND indexdef ILIKE '%source_event_id%'`);
+check('the source-identity unique index is NOT created in Phase A',
+  uniqIdx.rows.length === 0, JSON.stringify(uniqIdx.rows));
+
+// A row with no source id must still be insertable, and two of them must
+// coexist — otherwise Phase A would break ingestion before Phase B can run.
+const nullIds = await db.query(
+  `INSERT INTO events (venue_id, title, event_date) VALUES ($1,'Null Id A', CURRENT_DATE + 40), ($1,'Null Id B', CURRENT_DATE + 40) RETURNING id`,
+  [venueId]);
+check('rows without a source_event_id still insert (and coexist)', nullIds.rows.length === 2);
+
+console.log('\n--- 0020: ingest_runs is service-role only ---');
+const runIns = await db.query(
+  `INSERT INTO ingest_runs (source_type, market_id, started_at, status, events_seen)
+   VALUES ('resident_advisor', $1, now(), 'complete', 12) RETURNING id`, [marketId]);
+check('a run row can be recorded', runIns.rows.length === 1);
+
+const badStatusRun = await db.query(`SELECT 1`).then(async () => {
+  try { await db.query(`INSERT INTO ingest_runs (source_type, started_at, status) VALUES ('x', now(), 'nonsense')`); return false; }
+  catch { return true; }
+});
+check('an invalid run status is rejected', badStatusRun);
+
+// The point of the REVOKE: RLS with no policy would return zero rows, which is
+// indistinguishable from "no runs yet". A hard permission denial is the goal.
+await db.exec(`SELECT set_config('test.uid', '', false)`);
+const anonRead = await asRole('anon', `SELECT * FROM ingest_runs`);
+check('anon cannot read ingest_runs at all', !anonRead.ok, anonRead.ok ? 'READABLE' : '');
+const authedRead = await asRole('authenticated', `SELECT * FROM ingest_runs`);
+check('a signed-in user cannot read ingest_runs either', !authedRead.ok, authedRead.ok ? 'READABLE' : '');
+const anonWrite = await asRole('authenticated',
+  `INSERT INTO ingest_runs (source_type, started_at, status) VALUES ('forged', now(), 'complete')`);
+check('clients cannot forge a run record', !anonWrite.ok, anonWrite.ok ? 'WROTE' : '');
+
+// events stays publicly readable, so the new columns are readable too — they
+// carry no secret. What matters is that they are not client-WRITABLE.
+const anonSeesCols = await asRole('anon', `SELECT source_event_id, last_seen_at FROM events LIMIT 1`);
+check('the new events columns are readable (events is public by design)', anonSeesCols.ok,
+  anonSeesCols.err ?? '');
+// An UPDATE with no matching UPDATE policy does not raise — RLS filters it to
+// zero rows and the statement "succeeds". Asserting !ok would pass vacuously
+// against a table that were fully writable, so assert the rows instead: nothing
+// may come back, and the stored value must be untouched.
+await db.query(`UPDATE events SET last_seen_at = TIMESTAMPTZ '2020-01-01 00:00:00+00' WHERE id = $1`,
+  [testEventId]);
+const anonWritesCol = await asRole('anon',
+  `UPDATE events SET last_seen_at = now() WHERE id = $1 RETURNING id`, [testEventId]);
+const stillOld = await db.query(`SELECT last_seen_at FROM events WHERE id = $1`, [testEventId]);
+check('anon writes zero rows to last_seen_at',
+  (anonWritesCol.rows ?? []).length === 0, JSON.stringify(anonWritesCol.rows ?? anonWritesCol.err));
+check('and the stored last_seen_at is untouched',
+  new Date(stillOld.rows[0].last_seen_at).getUTCFullYear() === 2020,
+  String(stillOld.rows[0].last_seen_at));
+await db.exec(`SELECT set_config('test.uid', '${idOf.alice}', false)`);
+
 console.log(`\n${failures === 0 ? 'ALL PASSED' : failures + ' FAILURE(S)'}`);
 await db.close();
 process.exit(failures ? 1 : 0);
