@@ -36,21 +36,32 @@ const STALE_SQL = `
 -- Events absent from the most recent COMPLETE run for their source + market.
 -- "Complete" is the point: a half-failed run must not make live events look
 -- delisted. Reports only; deletes nothing.
-WITH last_complete AS (
-    SELECT DISTINCT ON (source_type, market_id)
-           source_type, market_id, started_at
+-- Compared per SOURCE PASS, deliberately NOT per market. Attributing an event
+-- to a market via venues.market_id is unreliable: venues.name is globally
+-- unique, so a venue re-attributed by a later market's segment leaves its
+-- events looking absent from that market's run even though the pass just
+-- touched them. That false positive is the silent-deletion hazard this whole
+-- table exists to prevent, so market never enters the staleness test.
+WITH pass AS (
+    SELECT source_type,
+           max(started_at)                          AS pass_end,
+           max(started_at) - INTERVAL '6 hours'      AS cluster_floor
     FROM ingest_runs
     WHERE status = 'complete'
-    ORDER BY source_type, market_id, started_at DESC
+    GROUP BY source_type
+), pass_start AS (
+    SELECT r.source_type, min(r.started_at) AS started_at
+    FROM ingest_runs r
+    JOIN pass p ON p.source_type = r.source_type
+    WHERE r.status = 'complete' AND r.started_at >= p.cluster_floor
+    GROUP BY r.source_type
 )
-SELECT e.id, e.title, e.event_date, e.source_type, v.market_id, e.last_seen_at
+SELECT e.id, e.title, e.event_date, e.source_type, e.last_seen_at
 FROM events e
-JOIN venues v ON v.id = e.venue_id
-JOIN last_complete lc
-  ON lc.source_type = e.source_type AND lc.market_id = v.market_id
+JOIN pass_start ps ON ps.source_type = e.source_type
 WHERE e.event_date >= CURRENT_DATE
-  AND (e.last_seen_at IS NULL OR e.last_seen_at < lc.started_at)
-ORDER BY e.source_type, v.market_id, e.event_date;`;
+  AND (e.last_seen_at IS NULL OR e.last_seen_at < ps.started_at)
+ORDER BY e.source_type, e.event_date;`;
 
 if (process.argv.includes('--sql')) {
   console.log(STALE_SQL);
@@ -167,20 +178,31 @@ if (dupes.length === 0) {
 
 // --- 3. Stale ---------------------------------------------------------------
 console.log('\n3) STALE — present in the DB but absent from the most recent complete run');
+// Per SOURCE PASS, not per market — see the note on STALE_SQL. A pass is the
+// most recent cluster of complete runs for that source (6h window), and its
+// start is the cutoff: anything the pass touched is live, whichever market's
+// segment happened to touch it.
+const PASS_CLUSTER_MS = 6 * 60 * 60 * 1000;
+const passStart = new Map();
+for (const src of new Set(runs.filter((r) => r.status === 'complete').map((r) => r.source_type))) {
+  const done = runs.filter((r) => r.status === 'complete' && r.source_type === src);
+  const end = Math.max(...done.map((r) => new Date(r.started_at).getTime()));
+  const inPass = done.filter((r) => new Date(r.started_at).getTime() >= end - PASS_CLUSTER_MS);
+  passStart.set(src, Math.min(...inPass.map((r) => new Date(r.started_at).getTime())));
+}
 const stale = new Map();
 for (const e of events) {
-  const k = key(e.source_type, marketOf(e));
-  const run = lastComplete.get(k);
-  if (!run) continue;
-  if (e.last_seen_at === null || new Date(e.last_seen_at) < new Date(run.started_at)) {
-    stale.set(k, (stale.get(k) ?? 0) + 1);
+  const start = passStart.get(e.source_type);
+  if (start === undefined) continue;
+  if (e.last_seen_at === null || new Date(e.last_seen_at).getTime() < start) {
+    stale.set(e.source_type, (stale.get(e.source_type) ?? 0) + 1);
   }
 }
 if (stale.size === 0) console.log('   none');
-for (const [k, n] of [...stale.entries()].sort((a, b) => b[1] - a[1])) {
-  const [src, mid] = k.split('|');
-  console.log(`   ${src.padEnd(18)} ${(marketSlug.get(Number(mid)) ?? 'no-market').padEnd(18)} ${n}`);
+for (const [src, n] of [...stale.entries()].sort((a, b) => b[1] - a[1])) {
+  console.log(`   ${src.padEnd(18)} ${n}`);
 }
+console.log('   (per source pass, not per market — market attribution via venues is unreliable)');
 console.log('   (run `node ingest-report.js --sql` for the single-query form)');
 
 // --- 4. Split forecast ------------------------------------------------------
