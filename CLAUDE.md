@@ -51,12 +51,19 @@ run again. If Spotify links are missing for a city, the fix is almost always
 "run `npm run sync:spotify`", not a code change. Its work queue is
 `WHERE deezer_id IS NULL`.
 
-**Known bug:** `findSpotifyArtist()` returns `exactMatch ?? candidates[0]`, so
-a name with no exact match silently links to Spotify's first guess. ~8% of
-artists are wrong this way — local DJ "Donk" resolves to Beyoncé, the venue
-"Hamburger Mary's" to a baroque ensemble. Full coverage therefore does not mean
-correct data, and Vibe Check plays the wrong audio for those rows. Fix the
-matcher before automating this script.
+**Matching is exact-or-nothing, and low coverage is the correct outcome.**
+`pickMatch()` links an artist only when a candidate's name matches ours after
+normalization, and returns `null` otherwise — for Deezer as well as Spotify. It
+used to fall back to `candidates[0]`, which silently linked ~8% of artists to
+whatever Spotify guessed first (a local DJ named "Donk" resolved to Beyoncé, the
+venue "Hamburger Mary's" to a baroque ensemble). That fallback is gone and the
+bad rows were cleared; a spot check of 150 linked artists against the live
+Spotify API found 0 name mismatches.
+
+So an unmatched artist means "no confident match," not "not enriched yet," and
+roughly a third of artists carrying a `spotify_id` is the expected steady state,
+not a bug to fix by loosening the matcher. Resist that: a wrong link is worse
+than a missing one, because Vibe Check will confidently play the wrong audio.
 
 Enrichment stores permanent ids, never preview URLs — Spotify killed
 `preview_url` for API apps and Deezer's previews expire in hours. Playback
