@@ -1,0 +1,44 @@
+-- Fixes a real bug in 0025, found live against production, not in the
+-- harness: promoters_public is a security_invoker view, which means the
+-- QUERYING ROLE needs SELECT privilege on every base-table column the view's
+-- DEFINITION references — not just the view's own output columns. 0025
+-- granted SELECT on id/slug/status/ingested_name (from 0024) and UPDATE on
+-- the six override columns (for members writing them), but never SELECT on
+-- those six at the base-table level — because the view's read of them was
+-- never considered a "grant" in its own right when the migration was written.
+-- The result: anon querying promoters_public got a flat
+-- "permission denied for table promoters" for every row, published or not.
+--
+-- Confirmed live: `anon.from('promoters_public').select(...)` failed with
+-- exactly that error before this fix.
+--
+-- Why the harness didn't catch it: the harness's own "draft is invisible
+-- through promoters_public" assertion checked `(rows ?? []).length === 0`,
+-- which is true both for a legitimate zero-row RLS result AND for an outright
+-- query failure (asRole returns no `rows` key at all on an exception, so
+-- `undefined ?? []` silently becomes `[]`). The assertion passed, but not for
+-- the reason it claimed to — it never actually got far enough to test RLS
+-- row-visibility, because the permission error fired first. Same class of
+-- false-pass CLAUDE.md already warns about for information_schema-based
+-- privilege checks, self-inflicted here via an overly forgiving fallback.
+-- Fixed alongside this migration by asserting .ok explicitly wherever a check
+-- depends on real rows coming back, not just an empty array.
+--
+-- Why GRANT SELECT here is the right fix, not a workaround: switching the view
+-- to security_definer was the other option, and was rejected — a definer view
+-- runs as the view's owner and bypasses the CALLER's RLS on the underlying
+-- table entirely, which would make a draft promoter visible to anon through
+-- the view. That is a strictly worse regression than the one being fixed.
+-- Granting SELECT on the raw override columns is safe: row-level RLS (draft
+-- vs published/claimed) is still fully enforced regardless of column grants,
+-- and these columns are not secrets the way phone numbers or Spotify tokens
+-- are — a bio, a contact string, a website override are exactly the content
+-- meant to become public once resolved. The one minor, accepted tradeoff:
+-- this also permits a direct `SELECT bio_override FROM promoters` by anon,
+-- which can distinguish "no override was ever set" from "override was set to
+-- a value matching the fallback" for the has-an-ingested-counterpart columns.
+-- That is low-stakes state-distinguishability, not a privacy or security
+-- concern, and far preferable to the alternative.
+GRANT SELECT (display_name_override, bio_override, logo_url_override,
+              website_override, socials_override, contact_override)
+    ON promoters TO anon, authenticated;

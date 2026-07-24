@@ -1244,14 +1244,37 @@ const blankBio = (await db.query(`SELECT bio FROM promoters_public WHERE id = $1
 check('bio_override = \'\' -> resolved bio is \'\', distinct from the NULL case above',
   blankBio.bio === '' && blankBio.bio !== null, JSON.stringify(blankBio.bio));
 
-// draft is invisible through the view too — security_invoker means this view
-// enforces the SAME RLS as a direct query against the base table, not a
-// bypass.
+// Everything above ran as the superuser connection (db.query), which proves
+// the SQL resolution logic is correct but NOT that anon can actually reach
+// it — a security_invoker view needs the CALLING role to hold SELECT on
+// every base-table column the view's definition touches, not just its output
+// columns, and that is a separate, real failure mode from RLS row-visibility.
+// This bit production once already: 0025 granted UPDATE on the six override
+// columns but never SELECT, so anon querying promoters_public got a flat
+// "permission denied for table promoters" for every row — a bug this exact
+// harness section originally missed, because its only asRole('anon', ...)
+// check collapsed a hard permission error and a legitimate empty RLS result
+// into the same "0 rows" outcome. Fixed in 0026; both branches — the
+// permission grant AND the RLS row-filter — are now exercised for real,
+// through the actual anon role, not the superuser connection.
+const publishedThroughView = await asRole('anon',
+  `SELECT display_name, bio FROM promoters_public WHERE id = $1`, [freshId]);
+check('anon can actually READ a published promoter through promoters_public — not just get zero rows for the wrong reason',
+  publishedThroughView.ok, publishedThroughView.err ?? '');
+check('and the resolved value anon receives is correct, not just present',
+  publishedThroughView.rows?.[0]?.bio === '', JSON.stringify(publishedThroughView.rows));
+
 await db.query(`UPDATE promoters SET status = 'draft' WHERE id = $1`, [freshId]);
 await db.exec(`SELECT set_config('test.uid', '', false)`);
 const draftThroughView = await asRole('anon', `SELECT id FROM promoters_public WHERE id = $1`, [freshId]);
-check('a draft promoter is invisible through promoters_public too (security_invoker, not a bypass)',
-  (draftThroughView.rows ?? []).length === 0, JSON.stringify(draftThroughView.rows ?? draftThroughView.err));
+// .ok must be true here — a permission error and "RLS legitimately returned
+// nothing" are different outcomes, and only the second is what this check
+// claims to prove. If .ok were false, EITHER the grant broke again OR
+// something else is wrong; either way this must fail loudly, not silently
+// agree via an empty array that could mean anything.
+check('a draft promoter is invisible through promoters_public too (security_invoker, not a bypass) — genuinely verified, not a masked permission error',
+  draftThroughView.ok && draftThroughView.rows.length === 0,
+  JSON.stringify({ ok: draftThroughView.ok, err: draftThroughView.err, rows: draftThroughView.rows }));
 await db.exec(`SELECT set_config('test.uid', '${idOf.alice}', false)`);
 await db.query(`UPDATE promoters SET status = 'published' WHERE id = $1`, [freshId]);
 
