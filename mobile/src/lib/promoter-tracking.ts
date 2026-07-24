@@ -3,6 +3,14 @@ import { Platform } from 'react-native';
 
 import { supabase } from '@/lib/supabase';
 
+// Why ua_class classification (migration 0024) matters as much as it does:
+// iMessage/WhatsApp/Slack/etc. fetch a shared link server-side, without
+// executing JS, to build a preview card. That is the SAME fact that makes a
+// real per-URL HTTP 404 unreachable in this app's current rendering mode
+// (see the long comment in promoters/[slug].tsx) — here it means those
+// fetches show up as phantom views on the day a link is sent; there it means
+// the preview itself renders a generic shell, not the promoter's actual name
+// or events. One non-JS-fetcher fact, two symptoms.
 const VISITOR_HASH_KEY = 'dscovr.visitor_hash';
 
 // A coarse, self-issued visitor identifier — explicitly NOT derived from IP or

@@ -43,15 +43,48 @@ export default function PromoterProfileScreen() {
     );
   }
 
-  // A draft promoter is invisible to anon by RLS, so this branch covers both
-  // "never existed" and "not published yet" identically — same soft-not-found
-  // treatment the event detail screen uses for a bad id. This is the
-  // client-side floor: it renders the same message on web and native
-  // regardless of the page's actual HTTP status. A genuine server-sent 404 for
-  // draft/removed pages (so a crawler or curl sees a real 404, not this
-  // client-rendered message after a 200) is a separate infrastructure
-  // decision, not resolved here — see the deploy notes.
-  if (error || !promoter) {
+  // KNOWN, ACCEPTED LIMITATION — read before "fixing" this:
+  //
+  // A real per-URL HTTP 404 is not achievable in this app's current rendering
+  // mode. Checked at the source, not assumed: web.output is "static" in
+  // app.json, and grepping expo-router's actual export pipelines
+  // (internal/static.js, the static web exporter, and rsc/exports.js, the
+  // server/RSC pipeline) for generateStaticParams / loader / generateMetadata
+  // — the route-level hooks that WOULD make build-time-per-param rendering or
+  // a real 404 possible — returns zero matches in either. Those names exist
+  // only as forward-declared TYPES on expo-router's Route shape in this
+  // version; nothing in the actual build consumes them. Confirmed empirically
+  // too: curling a live dynamic route today returns HTTP 200 with an empty
+  // shell for ANY param, valid or not — every dynamic route in this app
+  // already works this way, not just this one.
+  //
+  // So this is the deliberate fallback, not an oversight: check status
+  // CLIENT-SIDE and render a visible, honest not-found message once the data
+  // resolves, rather than a silent blank or broken shell. `promoter.status`
+  // is checked explicitly below even though RLS should already make a draft
+  // row unreachable (the query returns no row at all) — this is defense in
+  // depth, not the primary mechanism: if a future migration ever loosens the
+  // RLS policy or the column grant by accident, this check still catches it
+  // instead of quietly rendering draft data.
+  //
+  // Real, standing consequences of this limitation — not bugs, don't
+  // "fix" them by reaching for a build-time static-page generator without a
+  // deliberate decision to change rendering mode first:
+  //   1. `curl` and any non-JS-executing crawler still see HTTP 200 + an
+  //      empty shell for a draft or nonexistent slug — the check below only
+  //      ever runs after JS hydrates.
+  //   2. The exact same fact cuts the other way for PUBLISHED pages too:
+  //      iMessage, WhatsApp, Slack and similar link-preview fetchers also
+  //      don't execute JS, so a promoter link texted to someone previews as a
+  //      generic shell — not their name or events — even though the page is
+  //      genuinely live. This is the same non-JS-fetcher reality that
+  //      promoter-tracking.ts's ua_class classification exists to detect on
+  //      the way IN; here it's the same fact biting on the way OUT. If this
+  //      makes the "promoter's own page as a sales text" pitch feel flatter
+  //      than expected once real links go out, the fix is adopting an
+  //      SSR-capable rendering mode — a deliberate infra decision to make on
+  //      its own terms, not a patch to back into from here.
+  if (error || !promoter || (promoter.status !== 'published' && promoter.status !== 'claimed')) {
     return (
       <ThemedView style={styles.centered}>
         <ThemedText themeColor="textSecondary">

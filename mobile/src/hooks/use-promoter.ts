@@ -7,7 +7,12 @@ export type PublicPromoter = {
   id: number;
   slug: string;
   ingested_name: string;
-  status: 'published' | 'claimed';
+  // Typed as the full enum, not narrowed to 'published' | 'claimed': RLS
+  // (migration 0024) should make a 'draft' row unreachable here, but the type
+  // stays honest about what COULD arrive rather than asserting a guarantee
+  // this hook doesn't itself enforce. The route is what turns that guarantee
+  // into a visible, defensive check — see [slug].tsx.
+  status: 'draft' | 'published' | 'claimed';
 };
 
 export type PromoterMarket = { name: string } | null;
