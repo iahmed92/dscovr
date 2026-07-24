@@ -29,3 +29,6 @@ supabase/.temp/
 
 # Claude Code local runtime state
 .claude/
+
+# One-off ingest measurements (natural-key observations), not product data
+reports/

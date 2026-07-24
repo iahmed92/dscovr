@@ -18,6 +18,7 @@
 
 import 'dotenv/config';
 import { createClient } from '@supabase/supabase-js';
+import { finishRun, observe, seenNow, sourceIdentity, startRun } from './ingest-telemetry.js';
 
 const { SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY } = process.env;
 
@@ -175,10 +176,16 @@ function pickFlyerUrl(images) {
 async function syncEvent(event, marketId) {
   const eventDate = localDatePart(event.date);
   if (!event.title || !eventDate || !event.venue?.name) {
-    return; // not enough to key or place the row
+    return false; // not enough to key or place the row
   }
 
+  // Written as one pair — see ingest-telemetry.sourceIdentity.
+  const identity = sourceIdentity('resident_advisor', event.id);
+  if (!identity) return false;
+
   const venueId = await upsertVenue(event.venue, event.venue.area?.name, marketId);
+
+  observe({ venueId, title: event.title, eventDate, sourceType: 'resident_advisor' });
 
   const record = {
     venue_id: venueId,
@@ -187,17 +194,18 @@ async function syncEvent(event, marketId) {
     doors_time: localTimePart(event.startTime),
     ticket_url: event.contentUrl ? `https://ra.co${event.contentUrl}` : null,
     flyer_url: pickFlyerUrl(event.images),
-    source_type: 'resident_advisor',
+    ...identity,
+    last_seen_at: seenNow(),
   };
 
   const { data: eventRow, error } = await supabase
     .from('events')
-    .upsert(record, { onConflict: 'venue_id,title,event_date' })
+    .upsert(record, { onConflict: 'source_type,source_event_id' })
     .select('id')
     .single();
   if (error) {
     console.error(`Event upsert failed for "${event.title}": ${error.message}`);
-    return;
+    return false;
   }
 
   const artists = event.artists ?? [];
@@ -216,6 +224,7 @@ async function syncEvent(event, marketId) {
   }
 
   console.log(`  synced: ${event.title} @ ${event.venue.name} (${eventDate})`);
+  return true;
 }
 
 // ---------------------------------------------------------------------------
@@ -235,10 +244,7 @@ async function syncMarket(slug, areaId) {
     const listings = await graphql({ filters, pageSize: PAGE_SIZE, page });
     const rows = listings.data ?? [];
     for (const row of rows) {
-      if (row.event) {
-        await syncEvent(row.event, marketId);
-        synced++;
-      }
+      if (row.event && (await syncEvent(row.event, marketId))) synced++;
     }
     const total = listings.totalResults ?? 0;
     if (rows.length === 0 || page * PAGE_SIZE >= total) break;
@@ -260,10 +266,15 @@ async function main() {
   console.log(`Starting Resident Advisor sync (${entries.length} market(s), ${DAYS_AHEAD}-day window)...`);
   let total = 0;
   for (const [slug, areaId] of entries) {
+    const marketId = await getMarketId(slug).catch(() => null);
+    const runId = await startRun(supabase, 'resident_advisor', marketId);
     try {
-      total += await syncMarket(slug, areaId);
+      const seen = await syncMarket(slug, areaId);
+      total += seen;
+      await finishRun(supabase, runId, { status: 'complete', eventsSeen: seen });
     } catch (err) {
       console.error(`Error syncing ${slug}:`, err.message);
+      await finishRun(supabase, runId, { status: 'failed', notes: err.message });
     }
     await sleep(REQUEST_DELAY_MS);
   }
