@@ -38,6 +38,10 @@ export default function RootLayout() {
             />
             <Stack.Screen name="spotify-callback" options={{ headerShown: false }} />
             <Stack.Screen name="friends" options={{ title: 'Friends', headerBackTitle: 'Back' }} />
+            <Stack.Screen
+              name="promoters/[slug]"
+              options={{ title: '', headerBackTitle: 'Back', presentation: 'card' }}
+            />
           </Stack>
         </NowPlayingProvider>
       </AuthProvider>
