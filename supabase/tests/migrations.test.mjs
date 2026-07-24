@@ -789,6 +789,522 @@ check('and it is non-unique (venue+date collisions are legal now)',
   venueDateIdx.rows.length === 1 && !/unique/i.test(venueDateIdx.rows[0].indexdef),
   venueDateIdx.rows[0]?.indexdef ?? 'missing');
 
+console.log('\n--- 0023: normalize_promoter_name ---');
+const norm = async (s) => (await db.query(`SELECT normalize_promoter_name($1) AS n`, [s])).rows[0].n;
+check('"INSOMNIAC PRESENTS" and "Insomniac" normalize equal',
+  (await norm('INSOMNIAC PRESENTS')) === (await norm('Insomniac')),
+  `${await norm('INSOMNIAC PRESENTS')} vs ${await norm('Insomniac')}`);
+check('trailing corporate suffix + punctuation stripped',
+  (await norm('Live Nation, LLC.')) === 'live nation', await norm('Live Nation, LLC.'));
+check('mid-string "presents" is NOT stripped (trailing only)',
+  (await norm('Bar Franca Presents Live')).includes('presents'), await norm('Bar Franca Presents Live'));
+check('a name with no suffix is untouched but normalized',
+  (await norm('Bar Franca')) === 'bar franca');
+check('null-safe', (await norm(null)) === '');
+
+console.log('\n--- 0023: promoters gains matching identity ---');
+const promCols = await db.query(`
+    SELECT column_name, is_nullable FROM information_schema.columns
+    WHERE table_name = 'promoters' AND column_name IN ('ingested_name', 'slug', 'primary_market_id')
+    ORDER BY column_name`);
+check('promoters gains ingested_name, primary_market_id, slug', promCols.rows.length === 3,
+  JSON.stringify(promCols.rows));
+const slugUniq = await db.query(
+  `SELECT conname FROM pg_constraint WHERE conname = 'promoters_slug_uniq'`);
+check('slug is unique', slugUniq.rows.length === 1);
+
+console.log('\n--- 0023: resolve_promoter_alias — the matching rules ---');
+
+// Rule 3 (normalized match against an existing promoter).
+const insomniacPromoterId = (await db.query(
+  `INSERT INTO promoters (name, ingested_name) VALUES ('Insomniac', 'Insomniac') RETURNING id`)).rows[0].id;
+const rule3 = await db.query(
+  `SELECT resolve_promoter_alias('INSOMNIAC PRESENTS', 'insomniac_test') AS id`);
+check('rule 3: normalized match attaches an existing promoter',
+  rule3.rows[0].id === insomniacPromoterId, String(rule3.rows[0].id));
+const rule3Alias = await db.query(
+  `SELECT status, promoter_id FROM promoter_aliases WHERE raw_string = 'INSOMNIAC PRESENTS' AND source_type = 'insomniac_test'`);
+check('rule 3 marks the alias matched, not left unmatched',
+  rule3Alias.rows[0]?.status === 'matched' && rule3Alias.rows[0]?.promoter_id === insomniacPromoterId,
+  JSON.stringify(rule3Alias.rows[0]));
+
+// Rule 1 (already matched — the exact same call again must not re-derive).
+const rule1 = await db.query(
+  `SELECT resolve_promoter_alias('INSOMNIAC PRESENTS', 'insomniac_test') AS id`);
+check('rule 1: an already-matched alias returns the same promoter_id',
+  rule1.rows[0].id === insomniacPromoterId);
+
+// Rule 4 (no match anywhere — stays unmatched, NULL returned).
+const rule4 = await db.query(
+  `SELECT resolve_promoter_alias('Some Totally New Promoter Nobody Has Seen', 'insomniac_test') AS id`);
+check('rule 4: unrecognized raw string returns NULL', rule4.rows[0].id === null);
+const rule4Alias = await db.query(
+  `SELECT status, occurrence_count FROM promoter_aliases WHERE raw_string = 'Some Totally New Promoter Nobody Has Seen'`);
+check('rule 4 leaves the alias unmatched with occurrence_count 1',
+  rule4Alias.rows[0]?.status === 'unmatched' && rule4Alias.rows[0]?.occurrence_count === 1,
+  JSON.stringify(rule4Alias.rows[0]));
+
+console.log('\n--- 0023: idempotency (criterion 5) ---');
+await db.query(`SELECT resolve_promoter_alias('Repeat Offender', 'idem_test')`);
+await db.query(`SELECT resolve_promoter_alias('Repeat Offender', 'idem_test')`);
+await db.query(`SELECT resolve_promoter_alias('Repeat Offender', 'idem_test')`);
+const repeatRows = await db.query(
+  `SELECT occurrence_count FROM promoter_aliases WHERE raw_string = 'Repeat Offender' AND source_type = 'idem_test'`);
+check('three calls with the same (raw_string, source_type) produce ONE row',
+  repeatRows.rows.length === 1, `${repeatRows.rows.length} rows`);
+check('occurrence_count is 3, not reset per call', repeatRows.rows[0]?.occurrence_count === 3,
+  String(repeatRows.rows[0]?.occurrence_count));
+
+console.log('\n--- 0023: human curation via the table editor (criterion 2) ---');
+// Simulate: a raw string arrives unmatched, a human later edits the row by hand
+// (exactly what the Supabase table editor does), then the next sync re-derives.
+await db.query(`SELECT resolve_promoter_alias('Underrated Presents', 'curation_test')`);
+const preEdit = await db.query(
+  `SELECT status FROM promoter_aliases WHERE raw_string = 'Underrated Presents' AND source_type = 'curation_test'`);
+check('starts unmatched, as any never-seen raw string does', preEdit.rows[0]?.status === 'unmatched');
+
+const humanPickedPromoter = (await db.query(
+  `INSERT INTO promoters (name, ingested_name) VALUES ('Underrated Presents', 'Underrated Presents') RETURNING id`)).rows[0].id;
+await db.query(
+  `UPDATE promoter_aliases SET status = 'matched', promoter_id = $1
+   WHERE raw_string = 'Underrated Presents' AND source_type = 'curation_test'`, [humanPickedPromoter]);
+
+const postEdit = await db.query(
+  `SELECT resolve_promoter_alias('Underrated Presents', 'curation_test') AS id`);
+check('re-running after a manual table-editor edit attaches the human-picked promoter — no code change, no deploy',
+  postEdit.rows[0].id === humanPickedPromoter);
+
+console.log('\n--- 0023: an "ignored" alias is never re-attached ---');
+await db.query(`SELECT resolve_promoter_alias('Dj Magneto', 'ignore_test')`);
+await db.query(
+  `UPDATE promoter_aliases SET status = 'ignored' WHERE raw_string = 'Dj Magneto' AND source_type = 'ignore_test'`);
+// Even if a promoter named exactly this were later created, an ignored alias
+// must not silently start matching against it.
+await db.query(`INSERT INTO promoters (name, ingested_name) VALUES ('Dj Magneto', 'Dj Magneto')`);
+const ignored = await db.query(`SELECT resolve_promoter_alias('Dj Magneto', 'ignore_test') AS id`);
+check('an ignored alias returns NULL even when a matching promoter now exists',
+  ignored.rows[0].id === null);
+const ignoredCount = await db.query(
+  `SELECT occurrence_count, status FROM promoter_aliases WHERE raw_string = 'Dj Magneto' AND source_type = 'ignore_test'`);
+check('but occurrence_count still advances — we are still seeing it',
+  ignoredCount.rows[0]?.occurrence_count === 2 && ignoredCount.rows[0]?.status === 'ignored',
+  JSON.stringify(ignoredCount.rows[0]));
+
+console.log('\n--- 0023: data integrity ---');
+let inconsistentBlocked = false;
+try {
+  await db.query(
+    `INSERT INTO promoter_aliases (raw_string, source_type, status) VALUES ('bad', 'bad_test', 'matched')`);
+} catch { inconsistentBlocked = true; }
+check('a "matched" alias with no promoter_id is rejected (addition beyond the brief)',
+  inconsistentBlocked);
+
+console.log('\n--- 0023: promoter_aliases is service-role only ---');
+await db.exec(`SELECT set_config('test.uid', '', false)`);
+const anonSelect = await asRole('anon', `SELECT * FROM promoter_aliases`);
+check('anon cannot read promoter_aliases', !anonSelect.ok, anonSelect.ok ? 'READABLE' : '');
+const authSelect = await asRole('authenticated', `SELECT * FROM promoter_aliases`);
+check('a signed-in user cannot read promoter_aliases either', !authSelect.ok, authSelect.ok ? 'READABLE' : '');
+const anonExecute = await asRole('anon', `SELECT resolve_promoter_alias('x', 'y')`);
+check('anon cannot call resolve_promoter_alias', !anonExecute.ok, anonExecute.ok ? 'EXECUTABLE' : '');
+// Superseded by 0024: ingested_name becomes publicly readable for
+// published/claimed promoters (the profile page needs to render it). Every
+// promoter created in this 0023 section defaults to status='draft', so this
+// still evaluates to "not readable" here — but now because the ROW is hidden
+// by 0024's status-filtered policy, not because the column is ungranted. The
+// positive case (a published promoter's ingested_name IS visible) is asserted
+// in the 0024 section below, where it belongs.
+const anonIngestedName = await asRole('anon', `SELECT ingested_name FROM promoters LIMIT 1`);
+check('a draft promoter is invisible to anon regardless of column grants',
+  (anonIngestedName.rows ?? []).length === 0,
+  JSON.stringify(anonIngestedName.rows ?? anonIngestedName.err));
+await db.exec(`SELECT set_config('test.uid', '${idOf.alice}', false)`);
+
+console.log('\n--- 0024: promoters.status ---');
+const statusDefault = (await db.query(
+  `INSERT INTO promoters (name, ingested_name) VALUES ('Draft Test Promoter', 'Draft Test Promoter') RETURNING status`)).rows[0].status;
+check('status defaults to draft', statusDefault === 'draft', statusDefault);
+
+let badStatusBlocked = false;
+try {
+  await db.query(`INSERT INTO promoters (name, status) VALUES ('Bad Status', 'nonsense')`);
+} catch { badStatusBlocked = true; }
+check('an invalid status is rejected', badStatusBlocked);
+
+console.log('\n--- 0024: promoters RLS is status-filtered (0015\'s USING(true) is gone) ---');
+const draftPromoterId = (await db.query(
+  `INSERT INTO promoters (name, ingested_name, status) VALUES ('Hidden Promoter', 'Hidden Promoter', 'draft') RETURNING id`)).rows[0].id;
+const publishedPromoterId = (await db.query(
+  `INSERT INTO promoters (name, ingested_name, status) VALUES ('Visible Promoter', 'Visible Promoter', 'published') RETURNING id`)).rows[0].id;
+const claimedPromoterId = (await db.query(
+  `INSERT INTO promoters (name, ingested_name, status) VALUES ('Claimed Promoter', 'Claimed Promoter', 'claimed') RETURNING id`)).rows[0].id;
+
+const anonDraft = await asRole('anon', `SELECT id FROM promoters WHERE id = $1`, [draftPromoterId]);
+check('a draft promoter is invisible to anon', (anonDraft.rows ?? []).length === 0,
+  JSON.stringify(anonDraft.rows ?? anonDraft.err));
+const anonPublished = await asRole('anon', `SELECT id, ingested_name, slug, status FROM promoters WHERE id = $1`, [publishedPromoterId]);
+check('a published promoter is visible to anon, with the new columns readable',
+  anonPublished.ok && anonPublished.rows.length === 1 && anonPublished.rows[0].ingested_name === 'Visible Promoter',
+  JSON.stringify(anonPublished.rows ?? anonPublished.err));
+const anonClaimed = await asRole('anon', `SELECT id FROM promoters WHERE id = $1`, [claimedPromoterId]);
+check('a claimed promoter is also visible to anon', anonClaimed.ok && anonClaimed.rows.length === 1);
+
+const anonMarketId = await asRole('anon', `SELECT primary_market_id FROM promoters WHERE id = $1`, [publishedPromoterId]);
+check('primary_market_id stays out of the public grant even for a published row',
+  !anonMarketId.ok, anonMarketId.ok ? 'READABLE' : '');
+
+console.log('\n--- 0024: promoters_publishable — a shortlist, not a trigger ---');
+// Reuses testEventId's venue/market from earlier in the file for the
+// resolved-market cases, and builds a second venue with a NULL market for the
+// negative case.
+const pubVenueId = (await db.query(
+  `INSERT INTO venues (market_id, name) VALUES ($1, 'Publishable Test Venue') RETURNING id`, [marketId])).rows[0].id;
+const noMarketVenueId = (await db.query(
+  `INSERT INTO venues (market_id, name) VALUES (NULL, 'No Market Venue') RETURNING id`)).rows[0].id;
+
+async function makeMatchedPromoter(name) {
+  const id = (await db.query(
+    `INSERT INTO promoters (name, ingested_name, status) VALUES ($1, $2, 'draft') RETURNING id`, [name, name])).rows[0].id;
+  // Route through the real matcher so the alias is genuinely 'matched', not
+  // hand-set — this is what makes the guard clause meaningful rather than
+  // circular.
+  await db.query(`SELECT resolve_promoter_alias($1, 'publishable_test')`, [name]);
+  return id;
+}
+
+const twoEventsId = await makeMatchedPromoter('Two Events Promoter');
+await db.query(
+  `INSERT INTO events (venue_id, title, event_date, promoter_id) VALUES
+   ($1, 'Show A', CURRENT_DATE + 10, $2), ($1, 'Show B', CURRENT_DATE + 11, $2)`,
+  [pubVenueId, twoEventsId]);
+
+const oneEventId = await makeMatchedPromoter('One Event Promoter');
+await db.query(
+  `INSERT INTO events (venue_id, title, event_date, promoter_id) VALUES ($1, 'Solo Show', CURRENT_DATE + 10, $2)`,
+  [pubVenueId, oneEventId]);
+
+const noMarketId = await makeMatchedPromoter('No Market Promoter');
+await db.query(
+  `INSERT INTO events (venue_id, title, event_date, promoter_id) VALUES
+   ($1, 'Show C', CURRENT_DATE + 10, $2), ($1, 'Show D', CURRENT_DATE + 11, $2)`,
+  [noMarketVenueId, noMarketId]);
+
+// A promoter with 2+ events whose promoter_id was set WITHOUT going through
+// the matcher (simulating some other path onto events.promoter_id ever
+// existing) — must still be excluded, because the view's EXISTS clause checks
+// for a genuinely matched alias independently of event count.
+const unmatchedPathId = (await db.query(
+  `INSERT INTO promoters (name, ingested_name, status) VALUES ('Unmatched Path Promoter', 'Unmatched Path Promoter', 'draft') RETURNING id`)).rows[0].id;
+await db.query(
+  `INSERT INTO events (venue_id, title, event_date, promoter_id) VALUES
+   ($1, 'Show E', CURRENT_DATE + 10, $2), ($1, 'Show F', CURRENT_DATE + 11, $2)`,
+  [pubVenueId, unmatchedPathId]);
+
+const alreadyPublishedId = (await db.query(
+  `INSERT INTO promoters (name, ingested_name, status) VALUES ('Already Published Promoter', 'Already Published Promoter', 'published') RETURNING id`)).rows[0].id;
+await db.query(`SELECT resolve_promoter_alias('Already Published Promoter', 'publishable_test')`);
+await db.query(
+  `INSERT INTO events (venue_id, title, event_date, promoter_id) VALUES
+   ($1, 'Show G', CURRENT_DATE + 10, $2), ($1, 'Show H', CURRENT_DATE + 11, $2)`,
+  [pubVenueId, alreadyPublishedId]);
+
+const shortlist = (await db.query(`SELECT id FROM promoters_publishable`)).rows.map((r) => r.id);
+check('2+ events, matched alias, resolved market -> appears', shortlist.includes(twoEventsId));
+check('only 1 event -> excluded', !shortlist.includes(oneEventId));
+check('events with no resolved market -> excluded', !shortlist.includes(noMarketId));
+check('2+ events but no genuinely matched alias -> excluded (the EXISTS guard is load-bearing, not redundant)',
+  !shortlist.includes(unmatchedPathId));
+check('already published -> excluded (it is a shortlist of drafts, not a status report)',
+  !shortlist.includes(alreadyPublishedId));
+check('publishing nothing by itself: none of the qualifying promoters changed status',
+  (await db.query(`SELECT status FROM promoters WHERE id = $1`, [twoEventsId])).rows[0].status === 'draft');
+
+console.log('\n--- 0024: promoter_profile_views — rows, not a counter, write-but-not-read ---');
+await db.exec(`SELECT set_config('test.uid', '', false)`);
+
+// No RETURNING/.select() anywhere here: a bare INSERT needs only INSERT
+// privilege on the columns written, but RETURNING needs genuine SELECT
+// privilege on whatever it returns — even just `id` — which would quietly
+// poke a hole in "write but not read". This also matches the real client
+// call, which is a fire-and-forget `.insert(payload)` with no `.select()`.
+const viewInsert = await asRole('anon',
+  `INSERT INTO promoter_profile_views (promoter_id, outreach_token, visitor_hash, user_agent, referrer)
+   VALUES ($1, 'tok_abc123', 'visitor_xyz', 'Mozilla/5.0 (Macintosh)', 'https://instagram.com')`,
+  [publishedPromoterId]);
+check('anon can insert a view row', viewInsert.ok, viewInsert.err ?? '');
+const insertedRow = await db.query(
+  `SELECT * FROM promoter_profile_views WHERE promoter_id = $1 ORDER BY id DESC LIMIT 1`, [publishedPromoterId]);
+check('the row actually landed with the right fields',
+  insertedRow.rows[0]?.outreach_token === 'tok_abc123' && insertedRow.rows[0]?.visitor_hash === 'visitor_xyz',
+  JSON.stringify(insertedRow.rows[0]));
+
+const viewSelect = await asRole('anon', `SELECT * FROM promoter_profile_views`);
+check('anon cannot select from promoter_profile_views — write but not read',
+  !viewSelect.ok, viewSelect.ok ? 'READABLE' : '');
+
+// Two distinct guarantees, not one. First: ua_class isn't in the granted
+// column list at all, so a client can't even ATTEMPT to set it — this is
+// stronger than "the trigger overwrites it" (which would imply the write is
+// briefly accepted); it's rejected outright at the column-privilege level,
+// before the trigger runs.
+const spoofAttempt = await asRole('anon',
+  `INSERT INTO promoter_profile_views (promoter_id, user_agent, ua_class)
+   VALUES ($1, 'facebookexternalhit/1.1', 'human')`, [publishedPromoterId]);
+check('a client cannot even include ua_class in the INSERT — column privilege denies it outright',
+  !spoofAttempt.ok, spoofAttempt.ok ? 'ACCEPTED' : '');
+
+// Second: the trigger's real job is DERIVING ua_class from user_agent on a
+// well-formed insert (the only kind that's actually possible). Exercise that
+// end to end with a link-preview UA and a plain human UA.
+await asRole('anon',
+  `INSERT INTO promoter_profile_views (promoter_id, user_agent) VALUES ($1, 'facebookexternalhit/1.1')`,
+  [publishedPromoterId]);
+const derivedRow = await db.query(
+  `SELECT ua_class FROM promoter_profile_views WHERE promoter_id = $1 AND user_agent = 'facebookexternalhit/1.1'`,
+  [publishedPromoterId]);
+check('the trigger derives link_preview from user_agent on a real insert',
+  derivedRow.rows[0]?.ua_class === 'link_preview', derivedRow.rows[0]?.ua_class);
+
+const uaCases = [
+  ['facebookexternalhit/1.1', 'link_preview'],
+  ['WhatsApp/2.23', 'link_preview'],
+  ['Slackbot-LinkExpanding 1.0', 'link_preview'],
+  ['Mozilla/5.0 (compatible; Googlebot/2.1)', 'bot'],
+  ['python-requests/2.31', 'bot'],
+  ['Mozilla/5.0 (iPhone; CPU iPhone OS 17_0) AppleWebKit/605.1.15', 'human'],
+  [null, 'unknown'],
+];
+for (const [ua, expected] of uaCases) {
+  const got = (await db.query(`SELECT classify_view_user_agent($1) AS c`, [ua])).rows[0].c;
+  check(`classify_view_user_agent(${ua === null ? 'NULL' : `"${ua}"`}) -> ${expected}`, got === expected, got);
+}
+
+await asRole('anon',
+  `INSERT INTO promoter_profile_views (promoter_id, outreach_token) VALUES ($1, 'tok_real')`,
+  [publishedPromoterId]);
+const tokenRow = await db.query(
+  `SELECT outreach_token FROM promoter_profile_views WHERE promoter_id = $1 AND outreach_token = 'tok_real'`,
+  [publishedPromoterId]);
+check('a ?ref= token is stored verbatim, unvalidated against outreach_tokens',
+  tokenRow.rows[0]?.outreach_token === 'tok_real');
+
+await asRole('anon', `INSERT INTO promoter_profile_views (promoter_id) VALUES ($1)`, [publishedPromoterId]);
+const noTokenRow = await db.query(
+  `SELECT outreach_token FROM promoter_profile_views WHERE promoter_id = $1 ORDER BY id DESC LIMIT 1`,
+  [publishedPromoterId]);
+check('no ?ref= -> stored as NULL, not a placeholder string',
+  noTokenRow.rows[0]?.outreach_token === null);
+
+const ipHashAttempt = await asRole('anon',
+  `INSERT INTO promoter_profile_views (promoter_id, ip_hash) VALUES ($1, 'sneaky')`, [publishedPromoterId]);
+check('a client cannot set ip_hash — not in the granted column list',
+  !ipHashAttempt.ok, ipHashAttempt.ok ? 'WRITABLE' : '');
+
+const viewCountBefore = (await db.query(
+  `SELECT count(*)::int c FROM promoter_profile_views WHERE promoter_id = $1`, [publishedPromoterId])).rows[0].c;
+await asRole('anon', `INSERT INTO promoter_profile_views (promoter_id, visitor_hash) VALUES ($1, 'v1')`, [publishedPromoterId]);
+await asRole('anon', `INSERT INTO promoter_profile_views (promoter_id, visitor_hash) VALUES ($1, 'v1')`, [publishedPromoterId]);
+const viewCountAfter = (await db.query(
+  `SELECT count(*)::int c FROM promoter_profile_views WHERE promoter_id = $1`, [publishedPromoterId])).rows[0].c;
+check('repeat visits are NOT deduped — every view is its own row, a buying signal per the brief',
+  viewCountAfter === viewCountBefore + 2, `${viewCountBefore} -> ${viewCountAfter}`);
+
+console.log('\n--- 0024: outreach_tokens — zero anon interaction ---');
+const otSelect = await asRole('anon', `SELECT * FROM outreach_tokens`);
+check('anon cannot read outreach_tokens', !otSelect.ok, otSelect.ok ? 'READABLE' : '');
+const otInsert = await asRole('anon',
+  `INSERT INTO outreach_tokens (promoter_id, token) VALUES ($1, 'forged')`, [publishedPromoterId]);
+check('anon cannot write outreach_tokens', !otInsert.ok, otInsert.ok ? 'WRITABLE' : '');
+
+await db.exec(`SELECT set_config('test.uid', '${idOf.alice}', false)`);
+
+console.log('\n--- 0025: owner_id is gone ---');
+const ownerIdGone = await db.query(
+  `SELECT column_name FROM information_schema.columns WHERE table_name = 'promoters' AND column_name = 'owner_id'`);
+check('promoters.owner_id no longer exists', ownerIdGone.rows.length === 0);
+// The backfill-before-drop ordering within 0025 can't be exercised here for
+// the same reason noted in earlier briefs: the harness applies every
+// migration before any test runs, so there is no "before the drop" moment to
+// insert legacy owner_id data into. Verified instead against real production
+// data before writing the migration: 0/30 promoters rows had owner_id set,
+// so the backfill was empirically a no-op — see the migration's own header.
+
+console.log('\n--- 0025: promoter_members ---');
+const memberUniq = await db.query(
+  `SELECT conname FROM pg_constraint WHERE conname = 'promoter_members_promoter_user_uniq'`);
+check('(promoter_id, user_id) is unique', memberUniq.rows.length === 1);
+
+const memberPromoterId = (await db.query(
+  `INSERT INTO promoters (name, ingested_name, status) VALUES ('Member Test Promoter', 'Member Test Promoter', 'published') RETURNING id`)).rows[0].id;
+const otherPromoterId = (await db.query(
+  `INSERT INTO promoters (name, ingested_name, status) VALUES ('Other Promoter', 'Other Promoter', 'published') RETURNING id`)).rows[0].id;
+
+await db.query(`INSERT INTO promoter_members (promoter_id, user_id) VALUES ($1, $2)`, [memberPromoterId, idOf.alice]);
+
+await db.exec(`SELECT set_config('test.uid', '${idOf.alice}', false)`);
+const ownMembership = await asRole('authenticated', `SELECT promoter_id FROM promoter_members WHERE user_id = $1`, [idOf.alice]);
+check('a user can see their own membership row', ownMembership.ok && ownMembership.rows.length === 1,
+  JSON.stringify(ownMembership.rows ?? ownMembership.err));
+
+await db.exec(`SELECT set_config('test.uid', '${idOf.bob}', false)`);
+const othersMembership = await asRole('authenticated', `SELECT promoter_id FROM promoter_members WHERE user_id = $1`, [idOf.alice]);
+check('a different user cannot see alice\'s membership row', (othersMembership.rows ?? []).length === 0,
+  JSON.stringify(othersMembership.rows ?? othersMembership.err));
+
+const memberSelfInsert = await asRole('authenticated',
+  `INSERT INTO promoter_members (promoter_id, user_id) VALUES ($1, $2)`, [otherPromoterId, idOf.bob]);
+check('no non-service-role can insert their own membership — service role only, by design',
+  !memberSelfInsert.ok, memberSelfInsert.ok ? 'INSERTED' : '');
+const memberSelfDelete = await asRole('authenticated',
+  `DELETE FROM promoter_members WHERE user_id = $1`, [idOf.alice]);
+check('and none can delete a membership either', !memberSelfDelete.ok, memberSelfDelete.ok ? 'DELETED' : '');
+await db.exec(`SELECT set_config('test.uid', '${idOf.alice}', false)`);
+
+console.log('\n--- 0025: override columns exist, ownership split enforced at the GRANT level ---');
+const overlayCols = await db.query(`
+    SELECT column_name FROM information_schema.columns WHERE table_name = 'promoters'
+    AND column_name IN ('display_name_override','bio_override','logo_url_override','website_override','socials_override','contact_override')`);
+check('all six override columns exist', overlayCols.rows.length === 6, JSON.stringify(overlayCols.rows));
+
+const memberBioUpdate = await asRole('authenticated',
+  `UPDATE promoters SET bio_override = 'A real bio' WHERE id = $1`, [memberPromoterId]);
+check('a member CAN update an override column for their own promoter', memberBioUpdate.ok, memberBioUpdate.err ?? '');
+
+const memberIngestedNameAttempt = await asRole('authenticated',
+  `UPDATE promoters SET ingested_name = 'Hacked Name' WHERE id = $1`, [memberPromoterId]);
+check('but NOT ingested_name — not in the granted column list even for a real member',
+  !memberIngestedNameAttempt.ok, memberIngestedNameAttempt.ok ? 'WRITABLE' : '');
+const memberStatusAttempt = await asRole('authenticated',
+  `UPDATE promoters SET status = 'claimed' WHERE id = $1`, [memberPromoterId]);
+check('and NOT status — publication stays curator-only, a member cannot self-claim',
+  !memberStatusAttempt.ok, memberStatusAttempt.ok ? 'WRITABLE' : '');
+
+console.log('\n--- 0025: "and no other" — membership scoping (criterion 7) ---');
+await db.query(`UPDATE promoters SET bio_override = 'Untouched' WHERE id = $1`, [otherPromoterId]);
+const crossPromoterAttempt = await asRole('authenticated',
+  `UPDATE promoters SET bio_override = 'Sneaky' WHERE id = $1`, [otherPromoterId]);
+const otherPromoterAfter = await db.query(`SELECT bio_override FROM promoters WHERE id = $1`, [otherPromoterId]);
+check('a member of promoter A cannot update promoter B, even with a well-formed statement',
+  otherPromoterAfter.rows[0].bio_override === 'Untouched',
+  JSON.stringify({ attemptOk: crossPromoterAttempt.ok, value: otherPromoterAfter.rows[0].bio_override }));
+
+console.log('\n--- 0025: revocation is immediate on row deletion (criterion 8, "verify this") ---');
+await db.query(`DELETE FROM promoter_members WHERE promoter_id = $1 AND user_id = $2`, [memberPromoterId, idOf.alice]);
+const afterRevoke = await asRole('authenticated',
+  `UPDATE promoters SET bio_override = 'Should not land' WHERE id = $1`, [memberPromoterId]);
+const bioAfterRevoke = await db.query(`SELECT bio_override FROM promoters WHERE id = $1`, [memberPromoterId]);
+check('once the membership row is gone, the same user immediately loses update access',
+  bioAfterRevoke.rows[0].bio_override === 'A real bio',
+  `expected unchanged "A real bio", got: ${JSON.stringify({ attemptOk: afterRevoke.ok, value: bioAfterRevoke.rows[0].bio_override })}`);
+// Re-add so later sections needing a member can rely on one existing.
+await db.query(`INSERT INTO promoter_members (promoter_id, user_id) VALUES ($1, $2)`, [memberPromoterId, idOf.alice]);
+
+console.log('\n--- 0025: promoters_public — the three-state resolution ---');
+
+// No overrides set yet on a fresh promoter: display falls back to
+// ingested_name; bio/website/logo_url/contact/socials have no ingested
+// counterpart at all, so they resolve to plain NULL.
+const freshId = (await db.query(
+  `INSERT INTO promoters (name, ingested_name, status) VALUES ('Fresh Promoter', 'Fresh Promoter', 'published') RETURNING id`)).rows[0].id;
+const freshView = (await db.query(`SELECT * FROM promoters_public WHERE id = $1`, [freshId])).rows[0];
+check('no override set -> display_name falls back to ingested_name',
+  freshView.display_name === 'Fresh Promoter', freshView.display_name);
+check('no override set -> bio (no ingested counterpart) is NULL, not empty string',
+  freshView.bio === null, JSON.stringify(freshView.bio));
+
+// Criterion 1: override = 'text' renders that text.
+await db.query(`UPDATE promoters SET bio_override = 'My real bio' WHERE id = $1`, [freshId]);
+const withBio = (await db.query(`SELECT bio FROM promoters_public WHERE id = $1`, [freshId])).rows[0];
+check('bio_override = text -> resolved bio is that text', withBio.bio === 'My real bio', withBio.bio);
+
+// Criterion 2: override = NULL reverts, no data loss to sibling columns.
+await db.query(`UPDATE promoters SET website_override = 'https://example.com' WHERE id = $1`, [freshId]);
+await db.query(`UPDATE promoters SET bio_override = NULL WHERE id = $1`, [freshId]);
+const revertedBio = (await db.query(`SELECT bio, website FROM promoters_public WHERE id = $1`, [freshId])).rows[0];
+check('bio_override -> NULL reverts bio to null with no ingested counterpart to fall back to',
+  revertedBio.bio === null, JSON.stringify(revertedBio.bio));
+check('and the UNRELATED website override set moments earlier is untouched — no data loss',
+  revertedBio.website === 'https://example.com', revertedBio.website);
+
+// Criterion 3: override = '' renders BLANK, not the fallback — this is the
+// entire point of the brief. Proven against display_name specifically,
+// because it is the one field with a REAL ingested fallback to wrongly fall
+// back to if '' were mishandled as falsy.
+await db.query(`UPDATE promoters SET display_name_override = '' WHERE id = $1`, [freshId]);
+const blankName = (await db.query(`SELECT display_name FROM promoters_public WHERE id = $1`, [freshId])).rows[0];
+check('display_name_override = \'\' -> resolved display_name is \'\', NOT ingested_name',
+  blankName.display_name === '', JSON.stringify(blankName.display_name));
+check('(sanity: an empty string is not the same value as the fallback it could have collapsed into)',
+  blankName.display_name !== 'Fresh Promoter');
+
+// And the same for bio, where '' vs NULL is the whole three-state distinction
+// even with no ingested fallback in play.
+await db.query(`UPDATE promoters SET bio_override = '' WHERE id = $1`, [freshId]);
+const blankBio = (await db.query(`SELECT bio FROM promoters_public WHERE id = $1`, [freshId])).rows[0];
+check('bio_override = \'\' -> resolved bio is \'\', distinct from the NULL case above',
+  blankBio.bio === '' && blankBio.bio !== null, JSON.stringify(blankBio.bio));
+
+// Everything above ran as the superuser connection (db.query), which proves
+// the SQL resolution logic is correct but NOT that anon can actually reach
+// it — a security_invoker view needs the CALLING role to hold SELECT on
+// every base-table column the view's definition touches, not just its output
+// columns, and that is a separate, real failure mode from RLS row-visibility.
+// This bit production once already: 0025 granted UPDATE on the six override
+// columns but never SELECT, so anon querying promoters_public got a flat
+// "permission denied for table promoters" for every row — a bug this exact
+// harness section originally missed, because its only asRole('anon', ...)
+// check collapsed a hard permission error and a legitimate empty RLS result
+// into the same "0 rows" outcome. Fixed in 0026; both branches — the
+// permission grant AND the RLS row-filter — are now exercised for real,
+// through the actual anon role, not the superuser connection.
+const publishedThroughView = await asRole('anon',
+  `SELECT display_name, bio FROM promoters_public WHERE id = $1`, [freshId]);
+check('anon can actually READ a published promoter through promoters_public — not just get zero rows for the wrong reason',
+  publishedThroughView.ok, publishedThroughView.err ?? '');
+check('and the resolved value anon receives is correct, not just present',
+  publishedThroughView.rows?.[0]?.bio === '', JSON.stringify(publishedThroughView.rows));
+
+await db.query(`UPDATE promoters SET status = 'draft' WHERE id = $1`, [freshId]);
+await db.exec(`SELECT set_config('test.uid', '', false)`);
+const draftThroughView = await asRole('anon', `SELECT id FROM promoters_public WHERE id = $1`, [freshId]);
+// .ok must be true here — a permission error and "RLS legitimately returned
+// nothing" are different outcomes, and only the second is what this check
+// claims to prove. If .ok were false, EITHER the grant broke again OR
+// something else is wrong; either way this must fail loudly, not silently
+// agree via an empty array that could mean anything.
+check('a draft promoter is invisible through promoters_public too (security_invoker, not a bypass) — genuinely verified, not a masked permission error',
+  draftThroughView.ok && draftThroughView.rows.length === 0,
+  JSON.stringify({ ok: draftThroughView.ok, err: draftThroughView.err, rows: draftThroughView.rows }));
+await db.exec(`SELECT set_config('test.uid', '${idOf.alice}', false)`);
+await db.query(`UPDATE promoters SET status = 'published' WHERE id = $1`, [freshId]);
+
+console.log('\n--- 0025: display name vs matching name stay independent (criterion 5) ---');
+// A promoter whose display_name_override diverges wildly from ingested_name
+// must still receive newly ingested events, because matching reads
+// ingested_name, never the override.
+await db.query(`UPDATE promoters SET display_name_override = 'A Totally Different Stylized Name (TM)' WHERE id = $1`, [freshId]);
+const stillMatches = await db.query(`SELECT resolve_promoter_alias('Fresh Promoter', 'divergence_test') AS id`);
+check('a wildly different display_name_override does not break alias matching against ingested_name',
+  stillMatches.rows[0].id === freshId, JSON.stringify(stillMatches.rows[0]));
+const divergedView = (await db.query(`SELECT display_name, ingested_name FROM promoters_public WHERE id = $1`, [freshId])).rows[0];
+check('meanwhile the public page still renders the stylized override, not the matching name',
+  divergedView.display_name === 'A Totally Different Stylized Name (TM)' && divergedView.ingested_name === 'Fresh Promoter',
+  JSON.stringify(divergedView));
+
+console.log('\n--- 0025: a full re-ingest cannot disturb override columns (criterion 4) ---');
+// Simulates a pipeline-style write to the ingested identity column and proves
+// it is structurally independent of every override column, regardless of
+// whether the current pipeline ever actually performs such a write (Brief 2:
+// promoters are never auto-updated by ingestion today; this proves the
+// COLUMNS themselves cannot cross-contaminate if that ever changes).
+await db.query(`UPDATE promoters SET ingested_name = 'Fresh Promoter (re-ingested)' WHERE id = $1`, [freshId]);
+const afterReingest = (await db.query(`SELECT ingested_name, bio_override, website_override, display_name_override FROM promoters WHERE id = $1`, [freshId])).rows[0];
+check('ingested_name changes on a simulated re-ingest', afterReingest.ingested_name === 'Fresh Promoter (re-ingested)');
+check('every override column is untouched by it', afterReingest.bio_override === '' &&
+  afterReingest.website_override === 'https://example.com' &&
+  afterReingest.display_name_override === 'A Totally Different Stylized Name (TM)',
+  JSON.stringify(afterReingest));
+
 console.log(`\n${failures === 0 ? 'ALL PASSED' : failures + ' FAILURE(S)'}`);
 await db.close();
 process.exit(failures ? 1 : 0);

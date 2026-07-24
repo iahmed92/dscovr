@@ -22,6 +22,7 @@
 import 'dotenv/config';
 import { createClient } from '@supabase/supabase-js';
 import { finishRun, observe, seenNow, sourceIdentity, startRun } from './ingest-telemetry.js';
+import { resolvePrimaryPromoter } from './promoter-matching.js';
 import * as cheerio from 'cheerio';
 
 const { SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY } = process.env;
@@ -159,13 +160,10 @@ async function getMarketIds() {
   return new Map(data.map((m) => [m.slug, m.id]));
 }
 
-async function getOrCreatePromoter(name) {
-  const { data: existing } = await supabase.from('promoters').select('id').eq('name', name).maybeSingle();
-  if (existing) return existing.id;
-  const { data: created, error } = await supabase.from('promoters').insert({ name }).select('id').single();
-  if (error) throw new Error(`Promoter insert failed: ${error.message}`);
-  return created.id;
-}
+// Corrected against the original brief: Insomniac's schema.org JSON-LD has no
+// organizer field (verified against a real detail page). Every Insomniac event
+// is presented by Insomniac itself, so — like Relentless Beats — this is a
+// constant-entity source: resolved once in main(), not extracted per event.
 
 async function upsertVenue(location, marketId) {
   if (!location?.name) return null;
@@ -265,7 +263,7 @@ async function syncEvent(detailUrl, eventDate, marketId, promoterId) {
 async function main() {
   console.log('Starting Insomniac scrape...');
   const marketIds = await getMarketIds();
-  const promoterId = await getOrCreatePromoter('Insomniac');
+  const promoterId = await resolvePrimaryPromoter(supabase, ['Insomniac'], 'insomniac');
 
   const detailUrls = await discoverDetailUrls();
   console.log(`Found ${detailUrls.length} Insomniac detail page(s).`);

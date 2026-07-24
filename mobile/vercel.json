@@ -7,6 +7,7 @@
   "trailingSlash": false,
   "rewrites": [
     { "source": "/event/:id", "destination": "/event/[id]" },
-    { "source": "/e/:id", "destination": "/e/[id]" }
+    { "source": "/e/:id", "destination": "/e/[id]" },
+    { "source": "/promoters/:slug", "destination": "/promoters/[slug]" }
   ]
 }

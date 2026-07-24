@@ -19,6 +19,7 @@
 import 'dotenv/config';
 import { createClient } from '@supabase/supabase-js';
 import { finishRun, observe, seenNow, sourceIdentity, startRun } from './ingest-telemetry.js';
+import { resolvePrimaryPromoter } from './promoter-matching.js';
 
 const { SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY } = process.env;
 
@@ -82,6 +83,7 @@ query GET_EVENT_LISTINGS($filters: FilterInputDtoInput, $pageSize: Int, $page: I
         venue { id name contentUrl area { id name } }
         artists { id name }
         images { filename }
+        promoters { name }
       }
     }
     totalResults
@@ -173,6 +175,13 @@ function pickFlyerUrl(images) {
 // Sync one event
 // ---------------------------------------------------------------------------
 
+// RA's promoters array is 0, 1, or 2+ entries per event (sampled: 6% none, 82%
+// one, 12% multiple), and the name is as often whoever personally listed the
+// show as an actual promoter brand — no field distinguishes the two, and
+// guessing which is which is exactly the fuzzy judgment call this pipeline
+// refuses to make. Every name is still sent to the matcher (so a recurring
+// name surfaces for curation via occurrence_count); only the first — RA's own
+// primary-first array order — sets events.promoter_id.
 async function syncEvent(event, marketId) {
   const eventDate = localDatePart(event.date);
   if (!event.title || !eventDate || !event.venue?.name) {
@@ -184,11 +193,14 @@ async function syncEvent(event, marketId) {
   if (!identity) return false;
 
   const venueId = await upsertVenue(event.venue, event.venue.area?.name, marketId);
+  const promoterId = await resolvePrimaryPromoter(
+    supabase, (event.promoters ?? []).map((p) => p.name), 'resident_advisor');
 
   observe({ venueId, title: event.title, eventDate, sourceType: 'resident_advisor' });
 
   const record = {
     venue_id: venueId,
+    promoter_id: promoterId,
     title: event.title,
     event_date: eventDate,
     doors_time: localTimePart(event.startTime),

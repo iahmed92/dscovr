@@ -25,6 +25,7 @@
 import 'dotenv/config';
 import { createClient } from '@supabase/supabase-js';
 import { finishRun, observe, seenNow, sourceIdentity, startRun } from './ingest-telemetry.js';
+import { resolvePrimaryPromoter } from './promoter-matching.js';
 import * as cheerio from 'cheerio';
 
 const { SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY } = process.env;
@@ -133,25 +134,10 @@ async function getMarketId(slug) {
   return data.id;
 }
 
-async function getOrCreatePromoter(name) {
-  const { data: existing, error: selectError } = await supabase
-    .from('promoters')
-    .select('id')
-    .eq('name', name)
-    .maybeSingle();
-
-  if (selectError) throw new Error(`Promoter lookup failed for "${name}": ${selectError.message}`);
-  if (existing) return existing.id;
-
-  const { data: created, error: insertError } = await supabase
-    .from('promoters')
-    .insert({ name })
-    .select('id')
-    .single();
-
-  if (insertError) throw new Error(`Promoter insert failed for "${name}": ${insertError.message}`);
-  return created.id;
-}
+// A single constant entity (per the brief) — resolved once in main(), not per
+// event. Goes through the same matcher as the other sources so it too is
+// tracked in promoter_aliases (occurrence_count, first/last_seen_at) and could,
+// in principle, be re-pointed in the table editor like any other alias.
 
 // venues.name is UNIQUE. Only include keys we actually have data for, so a
 // conflicting update never overwrites good existing data (e.g. lat/long
@@ -282,7 +268,7 @@ async function syncEvent(musicEvent, marketId, promoterId, sourceEventId) {
 async function main() {
   console.log('Starting Relentless Beats scrape...');
   const marketId = await getMarketId(MARKET_SLUG);
-  const promoterId = await getOrCreatePromoter('Relentless Beats');
+  const promoterId = await resolvePrimaryPromoter(supabase, ['Relentless Beats'], 'relentless_beats');
 
   const eventUrls = await discoverEventUrls();
   console.log(`Found ${eventUrls.length} AZ events on relentlessbeats.com.`);
