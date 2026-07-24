@@ -17,6 +17,7 @@
 import 'dotenv/config';
 import { createClient } from '@supabase/supabase-js';
 import { finishRun, observe, seenNow, sourceIdentity, startRun } from './ingest-telemetry.js';
+import { resolvePrimaryPromoter } from './promoter-matching.js';
 
 const { SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY, TICKETMASTER_API_KEY } = process.env;
 
@@ -156,29 +157,9 @@ async function upsertVenue(tmVenue, marketId) {
   return data.id;
 }
 
-// promoters.name has NO unique constraint in the schema, so ON CONFLICT upsert
-// isn't possible here — do a manual select-then-insert instead.
-async function getOrCreatePromoter(name) {
-  if (!name) return null;
-
-  const { data: existing, error: selectError } = await supabase
-    .from('promoters')
-    .select('id')
-    .eq('name', name)
-    .maybeSingle();
-
-  if (selectError) throw new Error(`Promoter lookup failed for "${name}": ${selectError.message}`);
-  if (existing) return existing.id;
-
-  const { data: created, error: insertError } = await supabase
-    .from('promoters')
-    .insert({ name })
-    .select('id')
-    .single();
-
-  if (insertError) throw new Error(`Promoter insert failed for "${name}": ${insertError.message}`);
-  return created.id;
-}
+// Promoter identity now goes through resolve_promoter_alias (0023) via
+// promoter-matching.js — exact/normalized matching against existing promoters
+// only, never a fresh row created here. See extractPromoterNames below.
 
 // No API-verified SoundCloud ID exists, so this is always a search-results
 // link rather than a guaranteed direct profile match.
@@ -207,8 +188,14 @@ function pickFlyerUrl(images = []) {
   return widescreen?.url ?? images[0]?.url ?? null;
 }
 
-function extractPromoterName(tmEvent) {
-  return tmEvent.promoter?.name ?? tmEvent.promoters?.[0]?.name ?? null;
+// Ticketmaster's event carries both a singular `promoter` (their pick of
+// primary) and a `promoters` array (every promoter of record, primary first).
+// Every one is sent to the matcher for occurrence tracking; only the primary
+// determines events.promoter_id — see resolvePrimaryPromoter.
+function extractPromoterNames(tmEvent) {
+  const primary = tmEvent.promoter?.name ?? null;
+  const all = (tmEvent.promoters ?? []).map((p) => p.name);
+  return primary ? [primary, ...all] : all;
 }
 
 // ---------------------------------------------------------------------------
@@ -237,7 +224,7 @@ async function syncEvent(tmEvent, marketId) {
   }
 
   const venueId = await upsertVenue(tmVenue, marketId);
-  const promoterId = await getOrCreatePromoter(extractPromoterName(tmEvent));
+  const promoterId = await resolvePrimaryPromoter(supabase, extractPromoterNames(tmEvent), 'ticketmaster');
 
   observe({ venueId, title: tmEvent.name, eventDate: tmEvent.dates.start.localDate, sourceType: 'ticketmaster' });
 

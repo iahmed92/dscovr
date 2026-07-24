@@ -13,6 +13,7 @@ them. Repo root is the pipeline; `mobile/` is a separate npm project.
 | `resident-advisor-scraper.js` | Resident Advisor ingestion via ra.co GraphQL, per-market by area id |
 | `insomniac-scraper.js` | Insomniac ingestion — listing → per-event schema.org JSON-LD |
 | `spotify-vibe-check.js` | Enrichment: backfills spotify/deezer ids + genre_tags |
+| `promoter-matching.js` | Client entry to promoter matching — see below |
 | `supabase/migrations/` | Schema, numbered `NNNN_*.sql` |
 | `supabase/functions/vibecheck/` | Edge function, resolves preview audio on demand |
 | `mobile/` | Expo Router app |
@@ -35,6 +36,35 @@ scraper. `CITY_TO_MARKET` maps its cities (suburbs fold into the metro). Known
 gap: a few marquee festivals link to their own ticketing domains (no
 insomniac.com detail page), so they're skipped — revisit with card-level parsing
 if a coverage gap shows up.
+
+## Promoter matching is conservative on purpose
+
+`events.promoter_id` is filled by `resolve_promoter_alias()` (migration 0023),
+called via `promoter-matching.js` from every scraper. It is exact-match only —
+raw string match, or normalized-name match against an existing promoter's
+`ingested_name` — with **no fuzzy matching and no "closest candidate"
+fallback**. The pipeline **never creates a `promoters` row**; a promoter comes
+into existence only by a human creating one in the Supabase table editor.
+Everything the pipeline sees that doesn't resolve lands in `promoter_aliases`
+as `status = 'unmatched'`, queryable via `npm run report:promoters`.
+
+This mirrors the Spotify matcher's lesson on purpose: an unmatched row is a
+ten-second fix in the table editor; a wrongly matched promoter is a public page
+attributing someone's events to a competitor. Resist adding similarity
+thresholds here for the same reason.
+
+`ingested_name` (what new raw strings match against) is pipeline-owned and
+never rewritten after creation — `name` is the separate, human-editable display
+value. Don't let those merge back into one column; a promoter renaming their
+public display name would silently stop new events from attaching.
+
+Resident Advisor's `promoters` field is an array (0, 1, or 2+ per event) whose
+names are as often just whoever personally listed the show as an actual
+promoter brand — there's no field distinguishing the two. All raw names are
+still sent to the matcher for occurrence tracking; only the first (RA's own
+primary-first order) sets `events.promoter_id`. Don't try to guess
+person-vs-brand — that's exactly the fuzzy judgment call this pipeline refuses
+to automate.
 
 ## The pipeline is two-stage
 

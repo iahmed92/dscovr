@@ -789,6 +789,129 @@ check('and it is non-unique (venue+date collisions are legal now)',
   venueDateIdx.rows.length === 1 && !/unique/i.test(venueDateIdx.rows[0].indexdef),
   venueDateIdx.rows[0]?.indexdef ?? 'missing');
 
+console.log('\n--- 0023: normalize_promoter_name ---');
+const norm = async (s) => (await db.query(`SELECT normalize_promoter_name($1) AS n`, [s])).rows[0].n;
+check('"INSOMNIAC PRESENTS" and "Insomniac" normalize equal',
+  (await norm('INSOMNIAC PRESENTS')) === (await norm('Insomniac')),
+  `${await norm('INSOMNIAC PRESENTS')} vs ${await norm('Insomniac')}`);
+check('trailing corporate suffix + punctuation stripped',
+  (await norm('Live Nation, LLC.')) === 'live nation', await norm('Live Nation, LLC.'));
+check('mid-string "presents" is NOT stripped (trailing only)',
+  (await norm('Bar Franca Presents Live')).includes('presents'), await norm('Bar Franca Presents Live'));
+check('a name with no suffix is untouched but normalized',
+  (await norm('Bar Franca')) === 'bar franca');
+check('null-safe', (await norm(null)) === '');
+
+console.log('\n--- 0023: promoters gains matching identity ---');
+const promCols = await db.query(`
+    SELECT column_name, is_nullable FROM information_schema.columns
+    WHERE table_name = 'promoters' AND column_name IN ('ingested_name', 'slug', 'primary_market_id')
+    ORDER BY column_name`);
+check('promoters gains ingested_name, primary_market_id, slug', promCols.rows.length === 3,
+  JSON.stringify(promCols.rows));
+const slugUniq = await db.query(
+  `SELECT conname FROM pg_constraint WHERE conname = 'promoters_slug_uniq'`);
+check('slug is unique', slugUniq.rows.length === 1);
+
+console.log('\n--- 0023: resolve_promoter_alias — the matching rules ---');
+
+// Rule 3 (normalized match against an existing promoter).
+const insomniacPromoterId = (await db.query(
+  `INSERT INTO promoters (name, ingested_name) VALUES ('Insomniac', 'Insomniac') RETURNING id`)).rows[0].id;
+const rule3 = await db.query(
+  `SELECT resolve_promoter_alias('INSOMNIAC PRESENTS', 'insomniac_test') AS id`);
+check('rule 3: normalized match attaches an existing promoter',
+  rule3.rows[0].id === insomniacPromoterId, String(rule3.rows[0].id));
+const rule3Alias = await db.query(
+  `SELECT status, promoter_id FROM promoter_aliases WHERE raw_string = 'INSOMNIAC PRESENTS' AND source_type = 'insomniac_test'`);
+check('rule 3 marks the alias matched, not left unmatched',
+  rule3Alias.rows[0]?.status === 'matched' && rule3Alias.rows[0]?.promoter_id === insomniacPromoterId,
+  JSON.stringify(rule3Alias.rows[0]));
+
+// Rule 1 (already matched — the exact same call again must not re-derive).
+const rule1 = await db.query(
+  `SELECT resolve_promoter_alias('INSOMNIAC PRESENTS', 'insomniac_test') AS id`);
+check('rule 1: an already-matched alias returns the same promoter_id',
+  rule1.rows[0].id === insomniacPromoterId);
+
+// Rule 4 (no match anywhere — stays unmatched, NULL returned).
+const rule4 = await db.query(
+  `SELECT resolve_promoter_alias('Some Totally New Promoter Nobody Has Seen', 'insomniac_test') AS id`);
+check('rule 4: unrecognized raw string returns NULL', rule4.rows[0].id === null);
+const rule4Alias = await db.query(
+  `SELECT status, occurrence_count FROM promoter_aliases WHERE raw_string = 'Some Totally New Promoter Nobody Has Seen'`);
+check('rule 4 leaves the alias unmatched with occurrence_count 1',
+  rule4Alias.rows[0]?.status === 'unmatched' && rule4Alias.rows[0]?.occurrence_count === 1,
+  JSON.stringify(rule4Alias.rows[0]));
+
+console.log('\n--- 0023: idempotency (criterion 5) ---');
+await db.query(`SELECT resolve_promoter_alias('Repeat Offender', 'idem_test')`);
+await db.query(`SELECT resolve_promoter_alias('Repeat Offender', 'idem_test')`);
+await db.query(`SELECT resolve_promoter_alias('Repeat Offender', 'idem_test')`);
+const repeatRows = await db.query(
+  `SELECT occurrence_count FROM promoter_aliases WHERE raw_string = 'Repeat Offender' AND source_type = 'idem_test'`);
+check('three calls with the same (raw_string, source_type) produce ONE row',
+  repeatRows.rows.length === 1, `${repeatRows.rows.length} rows`);
+check('occurrence_count is 3, not reset per call', repeatRows.rows[0]?.occurrence_count === 3,
+  String(repeatRows.rows[0]?.occurrence_count));
+
+console.log('\n--- 0023: human curation via the table editor (criterion 2) ---');
+// Simulate: a raw string arrives unmatched, a human later edits the row by hand
+// (exactly what the Supabase table editor does), then the next sync re-derives.
+await db.query(`SELECT resolve_promoter_alias('Underrated Presents', 'curation_test')`);
+const preEdit = await db.query(
+  `SELECT status FROM promoter_aliases WHERE raw_string = 'Underrated Presents' AND source_type = 'curation_test'`);
+check('starts unmatched, as any never-seen raw string does', preEdit.rows[0]?.status === 'unmatched');
+
+const humanPickedPromoter = (await db.query(
+  `INSERT INTO promoters (name, ingested_name) VALUES ('Underrated Presents', 'Underrated Presents') RETURNING id`)).rows[0].id;
+await db.query(
+  `UPDATE promoter_aliases SET status = 'matched', promoter_id = $1
+   WHERE raw_string = 'Underrated Presents' AND source_type = 'curation_test'`, [humanPickedPromoter]);
+
+const postEdit = await db.query(
+  `SELECT resolve_promoter_alias('Underrated Presents', 'curation_test') AS id`);
+check('re-running after a manual table-editor edit attaches the human-picked promoter — no code change, no deploy',
+  postEdit.rows[0].id === humanPickedPromoter);
+
+console.log('\n--- 0023: an "ignored" alias is never re-attached ---');
+await db.query(`SELECT resolve_promoter_alias('Dj Magneto', 'ignore_test')`);
+await db.query(
+  `UPDATE promoter_aliases SET status = 'ignored' WHERE raw_string = 'Dj Magneto' AND source_type = 'ignore_test'`);
+// Even if a promoter named exactly this were later created, an ignored alias
+// must not silently start matching against it.
+await db.query(`INSERT INTO promoters (name, ingested_name) VALUES ('Dj Magneto', 'Dj Magneto')`);
+const ignored = await db.query(`SELECT resolve_promoter_alias('Dj Magneto', 'ignore_test') AS id`);
+check('an ignored alias returns NULL even when a matching promoter now exists',
+  ignored.rows[0].id === null);
+const ignoredCount = await db.query(
+  `SELECT occurrence_count, status FROM promoter_aliases WHERE raw_string = 'Dj Magneto' AND source_type = 'ignore_test'`);
+check('but occurrence_count still advances — we are still seeing it',
+  ignoredCount.rows[0]?.occurrence_count === 2 && ignoredCount.rows[0]?.status === 'ignored',
+  JSON.stringify(ignoredCount.rows[0]));
+
+console.log('\n--- 0023: data integrity ---');
+let inconsistentBlocked = false;
+try {
+  await db.query(
+    `INSERT INTO promoter_aliases (raw_string, source_type, status) VALUES ('bad', 'bad_test', 'matched')`);
+} catch { inconsistentBlocked = true; }
+check('a "matched" alias with no promoter_id is rejected (addition beyond the brief)',
+  inconsistentBlocked);
+
+console.log('\n--- 0023: promoter_aliases is service-role only ---');
+await db.exec(`SELECT set_config('test.uid', '', false)`);
+const anonSelect = await asRole('anon', `SELECT * FROM promoter_aliases`);
+check('anon cannot read promoter_aliases', !anonSelect.ok, anonSelect.ok ? 'READABLE' : '');
+const authSelect = await asRole('authenticated', `SELECT * FROM promoter_aliases`);
+check('a signed-in user cannot read promoter_aliases either', !authSelect.ok, authSelect.ok ? 'READABLE' : '');
+const anonExecute = await asRole('anon', `SELECT resolve_promoter_alias('x', 'y')`);
+check('anon cannot call resolve_promoter_alias', !anonExecute.ok, anonExecute.ok ? 'EXECUTABLE' : '');
+const anonIngestedName = await asRole('anon', `SELECT ingested_name FROM promoters LIMIT 1`);
+check('the new promoters columns stay out of the public grant (ingested_name)',
+  !anonIngestedName.ok, anonIngestedName.ok ? 'READABLE' : '');
+await db.exec(`SELECT set_config('test.uid', '${idOf.alice}', false)`);
+
 console.log(`\n${failures === 0 ? 'ALL PASSED' : failures + ' FAILURE(S)'}`);
 await db.close();
 process.exit(failures ? 1 : 0);
