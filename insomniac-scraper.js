@@ -238,7 +238,7 @@ async function syncEvent(detailUrl, eventDate, marketId, promoterId) {
 
   const { data: eventRow, error } = await supabase
     .from('events')
-    .upsert(record, { onConflict: 'venue_id,title,event_date' })
+    .upsert(record, { onConflict: 'source_type,source_event_id' })
     .select('id')
     .single();
   if (error) {
