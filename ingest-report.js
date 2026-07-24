@@ -57,6 +57,34 @@ if (process.argv.includes('--sql')) {
   process.exit(0);
 }
 
+// Preflight: everything here reads columns that only exist after 0020. Without
+// this the failure surfaces as a raw "column does not exist" from PostgREST,
+// which says nothing about which migration is missing or what to do next.
+async function requireMigration0020() {
+  const probe = await supabase.from('events').select('source_event_id,last_seen_at').limit(1);
+  const runsProbe = await supabase.from('ingest_runs').select('id').limit(1);
+  const missingCols = probe.error && /does not exist/i.test(probe.error.message);
+  const missingTable = runsProbe.error && /does not exist|schema cache/i.test(runsProbe.error.message);
+
+  if (missingCols || missingTable) {
+    console.error('Migration 0020 has not been applied to this database yet.\n');
+    if (missingCols) console.error('  missing: events.source_event_id / events.last_seen_at');
+    if (missingTable) console.error('  missing: ingest_runs table');
+    console.error(`
+This report reads state that 0020 creates, so there is nothing to report until
+it is applied. Apply it, then run the four ingests once (that run IS the
+backfill), then re-run this report.
+
+  supabase/migrations/0020_source_identity_and_liveness.sql
+
+The ingests will fail the same way until 0020 is applied — they now write
+source_event_id and last_seen_at on every upsert.`);
+    process.exit(1);
+  }
+}
+
+await requireMigration0020();
+
 async function fetchAll(table, select, tune = (q) => q) {
   let rows = [];
   for (let from = 0; ; from += 1000) {
