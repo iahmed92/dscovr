@@ -99,9 +99,43 @@ export default function PromoterProfileScreen() {
       <SafeAreaView style={styles.safeArea} edges={['bottom']}>
         <ScrollView contentContainerStyle={styles.content} showsVerticalScrollIndicator={false}>
           <View style={styles.body}>
-            <ThemedText style={styles.title}>{promoter.ingested_name}</ThemedText>
+            {/* display_name, never ingested_name — the resolved, promoter-
+                facing value everywhere a human sees this page. ingested_name
+                exists only for alias matching (0023) and never renders. */}
+            <ThemedText style={styles.title}>{promoter.display_name}</ThemedText>
             {market && (
               <ThemedText style={[styles.meta, { color: theme.textSecondary }]}>{market.name}</ThemedText>
+            )}
+
+            {/* The three-state trap, rendered correctly: bio === null means no
+                override was ever set — omit the section entirely, exactly
+                Brief 3's original "no bios" stance, since there is no
+                ingested bio to fall back to. bio === '' means a promoter
+                explicitly chose to blank it — the section renders, empty,
+                which is what makes '' OBSERVABLY different from null rather
+                than two code paths that happen to look identical. Any other
+                string is real, promoter-authored copy.
+
+                This does NOT contradict Brief 3's "no AI-generated or
+                inferred copy" rule: that rule was about DSCOVR inventing or
+                guessing content. bio_override is only ever set by a human
+                member editing their own profile (Brief 5+); once a person
+                has written it, it is user-generated content, not inference —
+                categorically the same distinction as a promoter supplying
+                their own website URL.
+
+                Comparison MUST use !== null && !== undefined, never a
+                truthiness check (if (!bio), bio || fallback) — either would
+                silently collapse the '' case into "no bio", reintroducing the
+                exact bug this whole brief exists to prevent, one layer above
+                the SQL that already got it right. */}
+            {promoter.bio !== null && promoter.bio !== undefined && (
+              <View style={styles.bioSection}>
+                <ThemedText style={styles.sectionHeading}>About</ThemedText>
+                <ThemedText type="small" themeColor="textSecondary">
+                  {promoter.bio}
+                </ThemedText>
+              </View>
             )}
 
             {/* Honest and unambiguous, per the brief — no "unclaimed" language
@@ -110,13 +144,13 @@ export default function PromoterProfileScreen() {
               <View style={[styles.claimBanner, { backgroundColor: theme.backgroundElement, borderColor: theme.border }]}>
                 <ThemedText type="smallBold">This profile hasn&apos;t been claimed yet</ThemedText>
                 <ThemedText type="small" themeColor="textSecondary" style={styles.claimCopy}>
-                  These are {promoter.ingested_name}&apos;s events, aggregated automatically. If this is
+                  These are {promoter.display_name}&apos;s events, aggregated automatically. If this is
                   your brand, claim it to add your own details.
                 </ThemedText>
                 <TouchableOpacity
                   onPress={() =>
                     Linking.openURL(
-                      `mailto:${CONTACT_EMAIL}?subject=${encodeURIComponent(`Claiming ${promoter.ingested_name} on DSCOVR`)}`
+                      `mailto:${CONTACT_EMAIL}?subject=${encodeURIComponent(`Claiming ${promoter.display_name} on DSCOVR`)}`
                     )
                   }
                   style={[styles.claimButton, { backgroundColor: theme.text }]}>
@@ -164,7 +198,7 @@ export default function PromoterProfileScreen() {
             <TouchableOpacity
               onPress={() =>
                 Linking.openURL(
-                  `mailto:${CONTACT_EMAIL}?subject=${encodeURIComponent(`Remove ${promoter.ingested_name} from DSCOVR`)}`
+                  `mailto:${CONTACT_EMAIL}?subject=${encodeURIComponent(`Remove ${promoter.display_name} from DSCOVR`)}`
                 )
               }>
               <ThemedText type="small" themeColor="textSecondary">
@@ -223,6 +257,10 @@ const styles = StyleSheet.create({
     paddingVertical: Spacing.two + 2,
     borderRadius: 12,
     alignItems: 'center',
+  },
+  bioSection: {
+    marginTop: Spacing.three,
+    gap: Spacing.one,
   },
   eventsSection: {
     marginTop: Spacing.four,

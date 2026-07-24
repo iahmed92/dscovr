@@ -13,6 +13,24 @@ export type PublicPromoter = {
   // this hook doesn't itself enforce. The route is what turns that guarantee
   // into a visible, defensive check — see [slug].tsx.
   status: 'draft' | 'published' | 'claimed';
+  // Everything below comes pre-resolved from promoters_public (migration
+  // 0025) — override where present, ingested as fallback, computed in SQL via
+  // COALESCE. `string | null` on every one of these is deliberate and load-
+  // bearing, NOT the same as "optional": null means no override was ever set
+  // (falls through to the ingested value, or to nothing for fields with none),
+  // '' means the promoter explicitly wants that field blank, and any other
+  // string is their real value. THIS IS THE THREE-STATE TRAP THE BRIEF WARNS
+  // ABOUT: `if (!promoter.bio)` or `promoter.bio || fallback` both treat ''
+  // as falsy and silently collapse "deliberately blank" into "not set" or
+  // "show the fallback" — exactly the bug the SQL COALESCE was written to
+  // avoid, reintroduced one layer up if this gets read carelessly. Always
+  // compare with `!== null && !== undefined`, never a truthiness check —
+  // enforced at the one call site that reads these, in [slug].tsx.
+  display_name: string;
+  bio: string | null;
+  website: string | null;
+  contact: string | null;
+  socials: Record<string, string> | null;
 };
 
 export type PromoterMarket = { name: string } | null;
@@ -52,7 +70,7 @@ export function usePromoter(slug: string | null) {
       setLoading(true);
 
       const { data: promoterRow, error: promoterError } = await supabase
-        .from('promoters')
+        .from('promoters_public')
         .select(PROMOTER_SELECT)
         .eq('slug', slug)
         // maybeSingle, not single: a missing/draft slug is a normal outcome

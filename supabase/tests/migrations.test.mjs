@@ -1118,6 +1118,170 @@ check('anon cannot write outreach_tokens', !otInsert.ok, otInsert.ok ? 'WRITABLE
 
 await db.exec(`SELECT set_config('test.uid', '${idOf.alice}', false)`);
 
+console.log('\n--- 0025: owner_id is gone ---');
+const ownerIdGone = await db.query(
+  `SELECT column_name FROM information_schema.columns WHERE table_name = 'promoters' AND column_name = 'owner_id'`);
+check('promoters.owner_id no longer exists', ownerIdGone.rows.length === 0);
+// The backfill-before-drop ordering within 0025 can't be exercised here for
+// the same reason noted in earlier briefs: the harness applies every
+// migration before any test runs, so there is no "before the drop" moment to
+// insert legacy owner_id data into. Verified instead against real production
+// data before writing the migration: 0/30 promoters rows had owner_id set,
+// so the backfill was empirically a no-op — see the migration's own header.
+
+console.log('\n--- 0025: promoter_members ---');
+const memberUniq = await db.query(
+  `SELECT conname FROM pg_constraint WHERE conname = 'promoter_members_promoter_user_uniq'`);
+check('(promoter_id, user_id) is unique', memberUniq.rows.length === 1);
+
+const memberPromoterId = (await db.query(
+  `INSERT INTO promoters (name, ingested_name, status) VALUES ('Member Test Promoter', 'Member Test Promoter', 'published') RETURNING id`)).rows[0].id;
+const otherPromoterId = (await db.query(
+  `INSERT INTO promoters (name, ingested_name, status) VALUES ('Other Promoter', 'Other Promoter', 'published') RETURNING id`)).rows[0].id;
+
+await db.query(`INSERT INTO promoter_members (promoter_id, user_id) VALUES ($1, $2)`, [memberPromoterId, idOf.alice]);
+
+await db.exec(`SELECT set_config('test.uid', '${idOf.alice}', false)`);
+const ownMembership = await asRole('authenticated', `SELECT promoter_id FROM promoter_members WHERE user_id = $1`, [idOf.alice]);
+check('a user can see their own membership row', ownMembership.ok && ownMembership.rows.length === 1,
+  JSON.stringify(ownMembership.rows ?? ownMembership.err));
+
+await db.exec(`SELECT set_config('test.uid', '${idOf.bob}', false)`);
+const othersMembership = await asRole('authenticated', `SELECT promoter_id FROM promoter_members WHERE user_id = $1`, [idOf.alice]);
+check('a different user cannot see alice\'s membership row', (othersMembership.rows ?? []).length === 0,
+  JSON.stringify(othersMembership.rows ?? othersMembership.err));
+
+const memberSelfInsert = await asRole('authenticated',
+  `INSERT INTO promoter_members (promoter_id, user_id) VALUES ($1, $2)`, [otherPromoterId, idOf.bob]);
+check('no non-service-role can insert their own membership — service role only, by design',
+  !memberSelfInsert.ok, memberSelfInsert.ok ? 'INSERTED' : '');
+const memberSelfDelete = await asRole('authenticated',
+  `DELETE FROM promoter_members WHERE user_id = $1`, [idOf.alice]);
+check('and none can delete a membership either', !memberSelfDelete.ok, memberSelfDelete.ok ? 'DELETED' : '');
+await db.exec(`SELECT set_config('test.uid', '${idOf.alice}', false)`);
+
+console.log('\n--- 0025: override columns exist, ownership split enforced at the GRANT level ---');
+const overlayCols = await db.query(`
+    SELECT column_name FROM information_schema.columns WHERE table_name = 'promoters'
+    AND column_name IN ('display_name_override','bio_override','logo_url_override','website_override','socials_override','contact_override')`);
+check('all six override columns exist', overlayCols.rows.length === 6, JSON.stringify(overlayCols.rows));
+
+const memberBioUpdate = await asRole('authenticated',
+  `UPDATE promoters SET bio_override = 'A real bio' WHERE id = $1`, [memberPromoterId]);
+check('a member CAN update an override column for their own promoter', memberBioUpdate.ok, memberBioUpdate.err ?? '');
+
+const memberIngestedNameAttempt = await asRole('authenticated',
+  `UPDATE promoters SET ingested_name = 'Hacked Name' WHERE id = $1`, [memberPromoterId]);
+check('but NOT ingested_name — not in the granted column list even for a real member',
+  !memberIngestedNameAttempt.ok, memberIngestedNameAttempt.ok ? 'WRITABLE' : '');
+const memberStatusAttempt = await asRole('authenticated',
+  `UPDATE promoters SET status = 'claimed' WHERE id = $1`, [memberPromoterId]);
+check('and NOT status — publication stays curator-only, a member cannot self-claim',
+  !memberStatusAttempt.ok, memberStatusAttempt.ok ? 'WRITABLE' : '');
+
+console.log('\n--- 0025: "and no other" — membership scoping (criterion 7) ---');
+await db.query(`UPDATE promoters SET bio_override = 'Untouched' WHERE id = $1`, [otherPromoterId]);
+const crossPromoterAttempt = await asRole('authenticated',
+  `UPDATE promoters SET bio_override = 'Sneaky' WHERE id = $1`, [otherPromoterId]);
+const otherPromoterAfter = await db.query(`SELECT bio_override FROM promoters WHERE id = $1`, [otherPromoterId]);
+check('a member of promoter A cannot update promoter B, even with a well-formed statement',
+  otherPromoterAfter.rows[0].bio_override === 'Untouched',
+  JSON.stringify({ attemptOk: crossPromoterAttempt.ok, value: otherPromoterAfter.rows[0].bio_override }));
+
+console.log('\n--- 0025: revocation is immediate on row deletion (criterion 8, "verify this") ---');
+await db.query(`DELETE FROM promoter_members WHERE promoter_id = $1 AND user_id = $2`, [memberPromoterId, idOf.alice]);
+const afterRevoke = await asRole('authenticated',
+  `UPDATE promoters SET bio_override = 'Should not land' WHERE id = $1`, [memberPromoterId]);
+const bioAfterRevoke = await db.query(`SELECT bio_override FROM promoters WHERE id = $1`, [memberPromoterId]);
+check('once the membership row is gone, the same user immediately loses update access',
+  bioAfterRevoke.rows[0].bio_override === 'A real bio',
+  `expected unchanged "A real bio", got: ${JSON.stringify({ attemptOk: afterRevoke.ok, value: bioAfterRevoke.rows[0].bio_override })}`);
+// Re-add so later sections needing a member can rely on one existing.
+await db.query(`INSERT INTO promoter_members (promoter_id, user_id) VALUES ($1, $2)`, [memberPromoterId, idOf.alice]);
+
+console.log('\n--- 0025: promoters_public — the three-state resolution ---');
+
+// No overrides set yet on a fresh promoter: display falls back to
+// ingested_name; bio/website/logo_url/contact/socials have no ingested
+// counterpart at all, so they resolve to plain NULL.
+const freshId = (await db.query(
+  `INSERT INTO promoters (name, ingested_name, status) VALUES ('Fresh Promoter', 'Fresh Promoter', 'published') RETURNING id`)).rows[0].id;
+const freshView = (await db.query(`SELECT * FROM promoters_public WHERE id = $1`, [freshId])).rows[0];
+check('no override set -> display_name falls back to ingested_name',
+  freshView.display_name === 'Fresh Promoter', freshView.display_name);
+check('no override set -> bio (no ingested counterpart) is NULL, not empty string',
+  freshView.bio === null, JSON.stringify(freshView.bio));
+
+// Criterion 1: override = 'text' renders that text.
+await db.query(`UPDATE promoters SET bio_override = 'My real bio' WHERE id = $1`, [freshId]);
+const withBio = (await db.query(`SELECT bio FROM promoters_public WHERE id = $1`, [freshId])).rows[0];
+check('bio_override = text -> resolved bio is that text', withBio.bio === 'My real bio', withBio.bio);
+
+// Criterion 2: override = NULL reverts, no data loss to sibling columns.
+await db.query(`UPDATE promoters SET website_override = 'https://example.com' WHERE id = $1`, [freshId]);
+await db.query(`UPDATE promoters SET bio_override = NULL WHERE id = $1`, [freshId]);
+const revertedBio = (await db.query(`SELECT bio, website FROM promoters_public WHERE id = $1`, [freshId])).rows[0];
+check('bio_override -> NULL reverts bio to null with no ingested counterpart to fall back to',
+  revertedBio.bio === null, JSON.stringify(revertedBio.bio));
+check('and the UNRELATED website override set moments earlier is untouched — no data loss',
+  revertedBio.website === 'https://example.com', revertedBio.website);
+
+// Criterion 3: override = '' renders BLANK, not the fallback — this is the
+// entire point of the brief. Proven against display_name specifically,
+// because it is the one field with a REAL ingested fallback to wrongly fall
+// back to if '' were mishandled as falsy.
+await db.query(`UPDATE promoters SET display_name_override = '' WHERE id = $1`, [freshId]);
+const blankName = (await db.query(`SELECT display_name FROM promoters_public WHERE id = $1`, [freshId])).rows[0];
+check('display_name_override = \'\' -> resolved display_name is \'\', NOT ingested_name',
+  blankName.display_name === '', JSON.stringify(blankName.display_name));
+check('(sanity: an empty string is not the same value as the fallback it could have collapsed into)',
+  blankName.display_name !== 'Fresh Promoter');
+
+// And the same for bio, where '' vs NULL is the whole three-state distinction
+// even with no ingested fallback in play.
+await db.query(`UPDATE promoters SET bio_override = '' WHERE id = $1`, [freshId]);
+const blankBio = (await db.query(`SELECT bio FROM promoters_public WHERE id = $1`, [freshId])).rows[0];
+check('bio_override = \'\' -> resolved bio is \'\', distinct from the NULL case above',
+  blankBio.bio === '' && blankBio.bio !== null, JSON.stringify(blankBio.bio));
+
+// draft is invisible through the view too — security_invoker means this view
+// enforces the SAME RLS as a direct query against the base table, not a
+// bypass.
+await db.query(`UPDATE promoters SET status = 'draft' WHERE id = $1`, [freshId]);
+await db.exec(`SELECT set_config('test.uid', '', false)`);
+const draftThroughView = await asRole('anon', `SELECT id FROM promoters_public WHERE id = $1`, [freshId]);
+check('a draft promoter is invisible through promoters_public too (security_invoker, not a bypass)',
+  (draftThroughView.rows ?? []).length === 0, JSON.stringify(draftThroughView.rows ?? draftThroughView.err));
+await db.exec(`SELECT set_config('test.uid', '${idOf.alice}', false)`);
+await db.query(`UPDATE promoters SET status = 'published' WHERE id = $1`, [freshId]);
+
+console.log('\n--- 0025: display name vs matching name stay independent (criterion 5) ---');
+// A promoter whose display_name_override diverges wildly from ingested_name
+// must still receive newly ingested events, because matching reads
+// ingested_name, never the override.
+await db.query(`UPDATE promoters SET display_name_override = 'A Totally Different Stylized Name (TM)' WHERE id = $1`, [freshId]);
+const stillMatches = await db.query(`SELECT resolve_promoter_alias('Fresh Promoter', 'divergence_test') AS id`);
+check('a wildly different display_name_override does not break alias matching against ingested_name',
+  stillMatches.rows[0].id === freshId, JSON.stringify(stillMatches.rows[0]));
+const divergedView = (await db.query(`SELECT display_name, ingested_name FROM promoters_public WHERE id = $1`, [freshId])).rows[0];
+check('meanwhile the public page still renders the stylized override, not the matching name',
+  divergedView.display_name === 'A Totally Different Stylized Name (TM)' && divergedView.ingested_name === 'Fresh Promoter',
+  JSON.stringify(divergedView));
+
+console.log('\n--- 0025: a full re-ingest cannot disturb override columns (criterion 4) ---');
+// Simulates a pipeline-style write to the ingested identity column and proves
+// it is structurally independent of every override column, regardless of
+// whether the current pipeline ever actually performs such a write (Brief 2:
+// promoters are never auto-updated by ingestion today; this proves the
+// COLUMNS themselves cannot cross-contaminate if that ever changes).
+await db.query(`UPDATE promoters SET ingested_name = 'Fresh Promoter (re-ingested)' WHERE id = $1`, [freshId]);
+const afterReingest = (await db.query(`SELECT ingested_name, bio_override, website_override, display_name_override FROM promoters WHERE id = $1`, [freshId])).rows[0];
+check('ingested_name changes on a simulated re-ingest', afterReingest.ingested_name === 'Fresh Promoter (re-ingested)');
+check('every override column is untouched by it', afterReingest.bio_override === '' &&
+  afterReingest.website_override === 'https://example.com' &&
+  afterReingest.display_name_override === 'A Totally Different Stylized Name (TM)',
+  JSON.stringify(afterReingest));
+
 console.log(`\n${failures === 0 ? 'ALL PASSED' : failures + ' FAILURE(S)'}`);
 await db.close();
 process.exit(failures ? 1 : 0);
